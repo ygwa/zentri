@@ -103,8 +103,8 @@ function EpubReaderEmbed({ source }: { source: Source }) {
   const highlights = getHighlightsBySource(source.id);
 
   // 处理高亮
-  const handleHighlight = (text: string, cfi: string) => {
-    createHighlight({
+  const handleHighlight = async (text: string, cfi: string) => {
+    await createHighlight({
       sourceId: source.id,
       content: text,
       position: { startOffset: cfi as unknown as number },
@@ -113,9 +113,9 @@ function EpubReaderEmbed({ source }: { source: Source }) {
   };
 
   // 处理添加到笔记
-  const handleAddToNote = (text: string, cfi: string) => {
+  const handleAddToNote = async (text: string, cfi: string) => {
     // 先创建高亮
-    createHighlight({
+    await createHighlight({
       sourceId: source.id,
       content: text,
       position: { startOffset: cfi as unknown as number },
@@ -123,15 +123,15 @@ function EpubReaderEmbed({ source }: { source: Source }) {
     });
 
     // 创建文献笔记
-    const card = createCard("literature", `摘录自《${source.title}》`, source.id);
-    useAppStore.getState().updateCard(card.id, {
+    const card = await createCard("literature", `摘录自《${source.title}》`, source.id);
+    await useAppStore.getState().updateCard(card.id, {
       content: `> ${text}\n\n`,
     });
   };
 
   // 处理进度更新
-  const handleProgress = (progress: number) => {
-    updateSource(source.id, { progress, lastReadAt: Date.now() });
+  const handleProgress = async (progress: number) => {
+    await updateSource(source.id, { progress, lastReadAt: Date.now() });
   };
 
   // 如果没有文件 URL，显示占位提示
@@ -166,8 +166,8 @@ function PdfReaderEmbed({ source }: { source: Source }) {
   const { createHighlight, createCard, updateSource } = useAppStore();
 
   // 处理高亮
-  const handleHighlight = (text: string, page: number) => {
-    createHighlight({
+  const handleHighlight = async (text: string, page: number) => {
+    await createHighlight({
       sourceId: source.id,
       content: text,
       position: { page },
@@ -175,15 +175,15 @@ function PdfReaderEmbed({ source }: { source: Source }) {
     });
 
     // 同时创建文献笔记
-    const card = createCard("literature", `摘录自《${source.title}》第${page}页`, source.id);
-    useAppStore.getState().updateCard(card.id, {
+    const card = await createCard("literature", `摘录自《${source.title}》第${page}页`, source.id);
+    await useAppStore.getState().updateCard(card.id, {
       content: `> ${text}\n\n📖 第 ${page} 页\n\n`,
     });
   };
 
   // 处理进度更新
-  const handleProgress = (progress: number) => {
-    updateSource(source.id, { progress, lastReadAt: Date.now() });
+  const handleProgress = async (progress: number) => {
+    await updateSource(source.id, { progress, lastReadAt: Date.now() });
   };
 
   // 如果没有文件 URL，显示占位提示
@@ -1199,8 +1199,8 @@ function BoxDetailView({
   const selectedCard = selectedCardId ? cards.find((c) => c.id === selectedCardId) : null;
   const splitCard = splitCardId ? cards.find((c) => c.id === splitCardId) : null;
 
-  const handleCreateCard = () => {
-    const card = createCard(type, "");
+  const handleCreateCard = async () => {
+    const card = await createCard(type, "");
     setSelectedCardId(card.id);
   };
 
@@ -1297,7 +1297,7 @@ function BoxDetailView({
                     key={card.id}
                     card={card}
                     onSelect={() => setSelectedCardId(card.id)}
-                    onDelete={() => deleteCard(card.id)}
+                    onDelete={async () => { await deleteCard(card.id); }}
                     onOpenInSplit={() => handleOpenInSplit(card.id)}
                     isSelected={selectedCardId === card.id}
                   />
@@ -1311,7 +1311,7 @@ function BoxDetailView({
                     key={card.id}
                     card={card}
                     onSelect={() => setSelectedCardId(card.id)}
-                    onDelete={() => deleteCard(card.id)}
+                    onDelete={async () => { await deleteCard(card.id); }}
                     onOpenInSplit={() => handleOpenInSplit(card.id)}
                     isSelected={selectedCardId === card.id}
                   />
@@ -1456,8 +1456,8 @@ function ReaderView({
     source.url.toLowerCase().endsWith('.pdf')
   );
 
-  const handleCreateNote = () => {
-    const note = createCard("literature", `${source.title} 笔记`, source.id);
+  const handleCreateNote = async () => {
+    const note = await createCard("literature", `${source.title} 笔记`, source.id);
     setSelectedNoteId(note.id);
   };
 
