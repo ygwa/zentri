@@ -42,24 +42,29 @@
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
+  /* 建议1: 加深背景色为冷灰(#F0F2F5)，让卡片"浮"起来 */
+  --background: oklch(0.955 0.003 265);
   --foreground: oklch(0.141 0.005 285.823);
+  /* 建议1: 卡片保持纯白 */
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.141 0.005 285.823);
+  /* 建议5: 数字等宽字体 - 使用更优雅的字体组合 */
+  --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", ui-monospace, monospace;
+  --font-tabular: "Inter var", "DIN Alternate", system-ui, sans-serif;
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.141 0.005 285.823);
-  --primary: oklch(0.21 0.006 285.885);
+  --primary: oklch(0.45 0.15 250);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.967 0.001 286.375);
+  --secondary: oklch(0.96 0.002 265);
   --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
-  --accent: oklch(0.967 0.001 286.375);
+  --muted: oklch(0.96 0.002 265);
+  --muted-foreground: oklch(0.5 0.02 265);
+  --accent: oklch(0.96 0.002 265);
   --accent-foreground: oklch(0.21 0.006 285.885);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.705 0.015 286.067);
+  --border: oklch(0.9 0.005 265);
+  --input: oklch(0.9 0.005 265);
+  --ring: oklch(0.55 0.12 250);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -113,7 +118,253 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html, body, #root {
+    @apply h-full;
+  }
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* 建议5: 数字使用等宽字体提升精密感和"数据感" */
+.font-tabular {
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  letter-spacing: -0.01em;
+}
+
+/* 统计数字专用 - 更大更突出 */
+.font-tabular-lg {
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* 建议1: 卡片阴影样式 - 更精致的弥散阴影让卡片"浮"起来 */
+.card-elevated {
+  box-shadow: 
+    0 1px 2px rgba(0, 0, 0, 0.03),
+    0 2px 4px rgba(0, 0, 0, 0.03),
+    0 4px 8px rgba(0, 0, 0, 0.03),
+    0 8px 16px rgba(0, 0, 0, 0.02);
+  transition: box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1), 
+              transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-elevated:hover {
+  box-shadow: 
+    0 2px 4px rgba(0, 0, 0, 0.04),
+    0 4px 8px rgba(0, 0, 0, 0.04),
+    0 8px 16px rgba(0, 0, 0, 0.04),
+    0 16px 32px rgba(0, 0, 0, 0.03);
+  transform: translateY(-2px);
+}
+
+/* 建议3: 选中态竖线样式 */
+.card-selected {
+  position: relative;
+}
+
+.card-selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--primary);
+  border-radius: 0 2px 2px 0;
+}
+
+/* 建议2: 盒子顶部色条 */
+.box-stripe {
+  position: relative;
+  overflow: hidden;
+}
+
+.box-stripe::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+}
+
+.box-stripe-amber::before {
+  background: linear-gradient(90deg, #f59e0b, #fbbf24);
+}
+
+.box-stripe-sky::before {
+  background: linear-gradient(90deg, #0ea5e9, #38bdf8);
+}
+
+.box-stripe-emerald::before {
+  background: linear-gradient(90deg, #10b981, #34d399);
+}
+
+.box-stripe-violet::before {
+  background: linear-gradient(90deg, #8b5cf6, #a78bfa);
+}
+
+/* 建议2: 链接流动可视化 - 点阵图 */
+.link-dots {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  max-width: 40px;
+}
+
+.link-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.3;
+}
+
+.link-dot.active {
+  opacity: 1;
+}
+
+/* 建议3: 卡片网格布局 - 更均匀的分布 */
+.masonry-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.masonry-grid > * {
+  /* 添加微妙的交互效果 */
+  transform-origin: center center;
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 鼠标悬停时卡片微微抬起 */
+.masonry-grid > *:hover {
+  transform: translateY(-4px) scale(1.01);
+  z-index: 10;
+}
+
+/* 超宽屏 */
+@media (min-width: 1536px) {
+  .masonry-grid {
+    grid-template-columns: repeat(5, 1fr);
+  }
+}
+
+/* 大屏 */
+@media (max-width: 1280px) {
+  .masonry-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* 中等屏幕 */
+@media (max-width: 1024px) {
+  .masonry-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* 小屏 */
+@media (max-width: 640px) {
+  .masonry-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 建议2: 知识流动桑基图风格 - 更精致的流动效果 */
+.sankey-flow {
+  position: relative;
+  height: 8px;
+  background: linear-gradient(90deg, 
+    transparent 0%, 
+    var(--flow-color, hsl(var(--primary))) 15%,
+    var(--flow-color, hsl(var(--primary))) 85%,
+    transparent 100%
+  );
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.sankey-flow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, 
+    rgba(255,255,255,0) 0%,
+    rgba(255,255,255,0.6) 50%,
+    rgba(255,255,255,0) 100%
+  );
+  animation: sankey-shine 2.5s ease-in-out infinite;
+}
+
+@keyframes sankey-shine {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+/* 建议4: 详情页编辑器 - 内容限宽居中，保持卡片形态 */
+.editor-container {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.editor-container-fullpage {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 40px;
+  min-height: calc(100vh - 120px);
+}
+
+/* 优化的背景网格 - 更微妙 */
+.desk-background {
+  background-image: 
+    radial-gradient(circle at 1px 1px, rgba(0,0,0,0.03) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+
+/* 建议3: 更明显的选中态样式 */
+.card-active {
+  position: relative;
+  background: linear-gradient(135deg, 
+    oklch(0.97 0.02 250 / 0.5), 
+    oklch(0.98 0.01 265 / 0.3)
+  );
+  border-color: oklch(0.7 0.1 250 / 0.3);
+}
+
+.card-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  border-radius: 4px 0 0 4px;
+  background: var(--stripe-color, oklch(0.5 0.2 250));
+}
+
+/* 选中卡片的微妙光晕效果 */
+.card-active-glow {
+  box-shadow: 
+    0 0 0 1px oklch(0.7 0.1 250 / 0.2),
+    0 4px 12px oklch(0.5 0.15 250 / 0.1);
 }
