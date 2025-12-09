@@ -127,7 +127,7 @@ pub fn read_card(file_path: &Path, vault_path: &Path) -> Option<Card> {
         modified_at,
         aliases: fm.aliases,
         links,
-        is_processed: false,
+        source_id: fm.source_id,
     })
 }
 
@@ -174,15 +174,11 @@ pub fn save_card(vault_path: &Path, card: &Card) -> Result<(), String> {
     let frontmatter = Frontmatter {
         title: Some(card.title.clone()),
         tags: card.tags.clone(),
-        card_type: Some(match card.card_type {
-            CardType::Fleeting => "fleeting".to_string(),
-            CardType::Literature => "literature".to_string(),
-            CardType::Permanent => "permanent".to_string(),
-            CardType::Project => "project".to_string(),
-        }),
+        card_type: Some(card.card_type.as_str().to_string()),
         aliases: card.aliases.clone(),
         created: None,
         modified: None,
+        source_id: card.source_id.clone(),
     };
     
     let yaml = serde_yaml::to_string(&frontmatter).map_err(|e| e.to_string())?;
@@ -238,7 +234,7 @@ pub fn create_card(vault_path: &Path, card_type: CardType, title: &str) -> Resul
         modified_at: now,
         aliases: vec![],
         links: vec![],
-        is_processed: false,
+        source_id: None,
     };
     
     save_card(vault_path, &card)?;

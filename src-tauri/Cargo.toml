@@ -23,3 +23,21 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# 文件系统操作
+walkdir = "2"
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+serde_yaml = "0.9"
+
+# 数据库
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# 时间处理
+chrono = { version = "0.4", features = ["serde"] }
+
+# 错误处理
+thiserror = "1"
+
+# 系统目录
+dirs = "5"
+

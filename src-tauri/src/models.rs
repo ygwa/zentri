@@ -16,6 +16,27 @@ impl Default for CardType {
     }
 }
 
+impl CardType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CardType::Fleeting => "fleeting",
+            CardType::Literature => "literature",
+            CardType::Permanent => "permanent",
+            CardType::Project => "project",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "fleeting" => CardType::Fleeting,
+            "literature" => CardType::Literature,
+            "permanent" => CardType::Permanent,
+            "project" => CardType::Project,
+            _ => CardType::Fleeting,
+        }
+    }
+}
+
 /// Markdown 文件的 Frontmatter
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Frontmatter {
@@ -31,6 +52,8 @@ pub struct Frontmatter {
     pub created: Option<String>,
     #[serde(default)]
     pub modified: Option<String>,
+    #[serde(default)]
+    pub source_id: Option<String>,
 }
 
 /// 卡片数据 (传给前端)
@@ -52,7 +75,7 @@ pub struct Card {
     #[serde(default)]
     pub links: Vec<String>,
     #[serde(default)]
-    pub is_processed: bool,
+    pub source_id: Option<String>,
 }
 
 /// 卡片列表项 (不含完整内容)
@@ -73,7 +96,7 @@ pub struct CardListItem {
     #[serde(default)]
     pub links: Vec<String>,
     #[serde(default)]
-    pub is_processed: bool,
+    pub source_id: Option<String>,
 }
 
 impl From<Card> for CardListItem {
@@ -89,8 +112,158 @@ impl From<Card> for CardListItem {
             modified_at: card.modified_at,
             aliases: card.aliases,
             links: card.links,
-            is_processed: card.is_processed,
+            source_id: card.source_id,
         }
     }
+}
+
+// ==================== 文献库类型 ====================
+
+/// 文献源类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceType {
+    Book,
+    Article,
+    Webpage,
+    Video,
+    Podcast,
+    Paper,
+}
+
+impl Default for SourceType {
+    fn default() -> Self {
+        SourceType::Book
+    }
+}
+
+impl SourceType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SourceType::Book => "book",
+            SourceType::Article => "article",
+            SourceType::Webpage => "webpage",
+            SourceType::Video => "video",
+            SourceType::Podcast => "podcast",
+            SourceType::Paper => "paper",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "book" => SourceType::Book,
+            "article" => SourceType::Article,
+            "webpage" => SourceType::Webpage,
+            "video" => SourceType::Video,
+            "podcast" => SourceType::Podcast,
+            "paper" => SourceType::Paper,
+            _ => SourceType::Book,
+        }
+    }
+}
+
+/// 文献源元数据
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceMetadata {
+    pub isbn: Option<String>,
+    pub publisher: Option<String>,
+    pub publish_date: Option<String>,
+    pub page_count: Option<i32>,
+    pub duration: Option<i32>, // 视频/播客时长（秒）
+}
+
+/// 文献源
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Source {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub source_type: SourceType,
+    pub title: String,
+    pub author: Option<String>,
+    pub url: Option<String>,
+    pub cover: Option<String>,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+    pub progress: i32,
+    pub last_read_at: Option<i64>,
+    pub metadata: Option<SourceMetadata>,
+    pub note_ids: Vec<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// 创建文献源的请求
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSourceRequest {
+    #[serde(rename = "type")]
+    pub source_type: SourceType,
+    pub title: String,
+    pub author: Option<String>,
+    pub url: Option<String>,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+}
+
+/// 更新文献源的请求
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSourceRequest {
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub url: Option<String>,
+    pub description: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub progress: Option<i32>,
+    pub last_read_at: Option<i64>,
+}
+
+/// 高亮位置信息
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HighlightPosition {
+    pub page: Option<i32>,
+    pub chapter: Option<String>,
+    pub start_offset: Option<String>, // CFI for EPUB
+    pub end_offset: Option<String>,
+}
+
+/// 高亮摘录
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Highlight {
+    pub id: String,
+    pub source_id: String,
+    pub card_id: Option<String>,
+    pub content: String,
+    pub note: Option<String>,
+    pub position: Option<HighlightPosition>,
+    pub color: Option<String>,
+    pub created_at: i64,
+}
+
+/// 创建高亮的请求
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateHighlightRequest {
+    pub source_id: String,
+    pub card_id: Option<String>,
+    pub content: String,
+    pub note: Option<String>,
+    pub position: Option<HighlightPosition>,
+    pub color: Option<String>,
+}
+
+// ==================== 应用状态 ====================
+
+/// 应用配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppConfig {
+    pub vault_path: Option<String>,
+    pub theme: String,
+    pub font_size: i32,
 }
 
