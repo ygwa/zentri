@@ -12,7 +12,7 @@ import {
   Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { isTauriEnv } from "@/lib/api";
+import { isTauriEnv } from "@/services/api";
 
 interface VaultSelectorProps {
   onSelect: (path: string) => void;

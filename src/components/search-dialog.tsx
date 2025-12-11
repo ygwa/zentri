@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -8,10 +8,18 @@ import {
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Search, Sparkles, BookOpen, StickyNote, FolderKanban } from "lucide-react";
+import { Search, Sparkles, BookOpen, StickyNote, FolderKanban, Loader2 } from "lucide-react";
 import { useAppStore } from "@/store";
 import { cn } from "@/lib/utils";
-import type { CardType } from "@/types";
+import * as api from "@/services/api";
+import type { CardType, EditorContent } from "@/types";
+
+// 辅助函数：将 content 转换为字符串
+function contentToString(content: string | EditorContent | undefined): string {
+  if (!content) return "";
+  if (typeof content === "string") return content;
+  return JSON.stringify(content);
+}
 
 const typeConfig: Record<CardType, { icon: React.ElementType; color: string }> = {
   fleeting: { icon: Sparkles, color: "text-amber-500" },
@@ -19,6 +27,15 @@ const typeConfig: Record<CardType, { icon: React.ElementType; color: string }> =
   permanent: { icon: StickyNote, color: "text-emerald-500" },
   project: { icon: FolderKanban, color: "text-purple-500" },
 };
+
+interface SearchResult {
+  id: string;
+  title: string;
+  score: number;
+  snippet?: string;
+  type: CardType;
+  tags: string[];
+}
 
 interface SearchDialogProps {
   open: boolean;
@@ -29,16 +46,84 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
   const { cards, selectCard } = useAppStore();
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 搜索结果
-  const results = query
-    ? cards.filter(
-        (card) =>
-          card.title.toLowerCase().includes(query.toLowerCase()) ||
-          card.content.toLowerCase().includes(query.toLowerCase()) ||
-          card.tags.some((tag) => tag.toLowerCase().includes(query.toLowerCase()))
-      )
-    : cards.slice(0, 10);
+  // 执行搜索（防抖）
+  const performSearch = useCallback(async (searchQuery: string) => {
+    if (!searchQuery.trim()) {
+      // 空搜索时显示最近卡片
+      setResults(
+        cards.slice(0, 10).map((c) => ({
+          id: c.id,
+          title: c.title,
+          score: 0,
+          snippet: contentToString(c.content).slice(0, 100) || undefined,
+          type: c.type,
+          tags: c.tags,
+        }))
+      );
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      if (api.isTauriEnv()) {
+        const searchResults = await api.search.search(searchQuery);
+        setResults(searchResults);
+      } else {
+        // Mock 模式：本地过滤
+        const filtered = cards.filter(
+          (card) => {
+            const contentStr = contentToString(card.content);
+            return (
+              card.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              contentStr.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              card.tags.some((tag) => tag.toLowerCase().includes(searchQuery.toLowerCase()))
+            );
+          }
+        );
+        setResults(
+          filtered.slice(0, 20).map((c) => ({
+            id: c.id,
+            title: c.title,
+            score: 1,
+            snippet: highlightText(contentToString(c.content), searchQuery),
+            type: c.type,
+            tags: c.tags,
+          }))
+        );
+      }
+    } catch (err) {
+      console.error("Search failed:", err);
+    } finally {
+      setIsSearching(false);
+    }
+  }, [cards]);
+
+  // 搜索防抖
+  useEffect(() => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    searchTimeoutRef.current = setTimeout(() => {
+      performSearch(query);
+    }, 150);
+
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [query, performSearch]);
+
+  // 对话框打开时初始化
+  useEffect(() => {
+    if (open) {
+      performSearch("");
+    }
+  }, [open, performSearch]);
 
   // 重置选中索引
   useEffect(() => {
@@ -100,33 +185,41 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
         {/* 搜索结果 */}
         <ScrollArea className="max-h-80">
           <div className="p-2">
-            {results.length === 0 ? (
+            {isSearching ? (
+              <div className="py-6 flex items-center justify-center text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                搜索中...
+              </div>
+            ) : results.length === 0 ? (
               <div className="py-6 text-center text-sm text-muted-foreground">
                 未找到相关卡片
               </div>
             ) : (
-              results.map((card, index) => {
-                const config = typeConfig[card.type];
+              results.map((result, index) => {
+                const config = typeConfig[result.type] || typeConfig.fleeting;
                 const Icon = config.icon;
                 return (
                   <div
-                    key={card.id}
+                    key={result.id}
                     className={cn(
-                      "flex cursor-pointer items-start gap-3 rounded-md p-2",
+                      "flex cursor-pointer items-start gap-3 rounded-md p-2 transition-colors",
                       index === selectedIndex && "bg-accent"
                     )}
-                    onClick={() => handleSelect(card.id)}
+                    onClick={() => handleSelect(result.id)}
                     onMouseEnter={() => setSelectedIndex(index)}
                   >
                     <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", config.color)} />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium">{card.title || "无标题"}</p>
-                      <p className="truncate text-sm text-muted-foreground">
-                        {card.content || "暂无内容"}
-                      </p>
-                      {card.tags.length > 0 && (
-                        <div className="mt-1 flex gap-1">
-                          {card.tags.slice(0, 3).map((tag) => (
+                      <p className="truncate font-medium">{result.title || "无标题"}</p>
+                      {result.snippet && (
+                        <p 
+                          className="text-sm text-muted-foreground line-clamp-2 [&_mark]:bg-yellow-200 [&_mark]:text-foreground [&_mark]:px-0.5 [&_mark]:rounded"
+                          dangerouslySetInnerHTML={{ __html: result.snippet }}
+                        />
+                      )}
+                      {result.tags.length > 0 && (
+                        <div className="mt-1 flex gap-1 flex-wrap">
+                          {result.tags.slice(0, 3).map((tag) => (
                             <Badge key={tag} variant="secondary" className="text-xs">
                               {tag}
                             </Badge>
@@ -134,6 +227,11 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
                         </div>
                       )}
                     </div>
+                    {query && result.score > 0 && (
+                      <span className="text-xs text-muted-foreground/50">
+                        {result.score.toFixed(1)}
+                      </span>
+                    )}
                   </div>
                 );
               })
@@ -157,5 +255,36 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
       </DialogContent>
     </Dialog>
   );
+}
+
+/**
+ * 简单的文本高亮函数（用于 Mock 模式）
+ */
+function highlightText(text: string, query: string): string {
+  if (!query || !text) return text.slice(0, 100);
+  
+  const lowerText = text.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  const index = lowerText.indexOf(lowerQuery);
+  
+  if (index === -1) {
+    return text.slice(0, 100) + (text.length > 100 ? "..." : "");
+  }
+  
+  const start = Math.max(0, index - 30);
+  const end = Math.min(text.length, index + query.length + 50);
+  
+  let snippet = "";
+  if (start > 0) snippet += "...";
+  
+  const before = text.slice(start, index);
+  const match = text.slice(index, index + query.length);
+  const after = text.slice(index + query.length, end);
+  
+  snippet += before + `<mark>${match}</mark>` + after;
+  
+  if (end < text.length) snippet += "...";
+  
+  return snippet;
 }
 

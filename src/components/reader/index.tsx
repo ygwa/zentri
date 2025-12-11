@@ -10,6 +10,8 @@ import type { Highlight } from "@/types";
 interface UnifiedReaderProps {
   url: string;
   fileType: "epub" | "pdf";
+  sourceId?: string;
+  sourceTitle?: string;
   highlights?: Highlight[];
   onHighlight?: (text: string, position: string | number) => void;
   onAddToNote?: (text: string, position: string | number) => void;
@@ -21,6 +23,8 @@ interface UnifiedReaderProps {
 export function UnifiedReader({
   url,
   fileType,
+  sourceId,
+  sourceTitle,
   highlights,
   onHighlight,
   onAddToNote,
@@ -40,6 +44,8 @@ export function UnifiedReader({
     return (
       <EpubReader
         url={url}
+        sourceId={sourceId}
+        sourceTitle={sourceTitle}
         highlights={highlights}
         onHighlight={(text, cfi) => onHighlight?.(text, cfi)}
         onAddToNote={(text, cfi) => onAddToNote?.(text, cfi)}
@@ -53,7 +59,10 @@ export function UnifiedReader({
     return (
       <PdfReader
         url={url}
+        sourceId={sourceId}
+        sourceTitle={sourceTitle}
         onHighlight={(text, page) => onHighlight?.(text, page)}
+        onAddToNote={(text, page) => onAddToNote?.(text, page)}
         onProgress={onProgress}
         className={className}
       />

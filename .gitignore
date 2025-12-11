@@ -26,4 +26,5 @@ dist-ssr
 docs
 
 .playwright/*
+.playwright-mcp/*
 .pnpm-store/*

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import {
   Sidebar,
   SidebarContent,
@@ -21,6 +22,7 @@ import {
   Search,
   Plus,
   Settings,
+  CalendarDays,
 } from "lucide-react";
 import { useAppStore } from "@/store";
 import type { ViewType } from "@/types";
@@ -39,7 +41,21 @@ interface AppSidebarProps {
 }
 
 export function AppSidebar({ onSearch, onCreateCard }: AppSidebarProps) {
-  const { currentView, setCurrentView, cards } = useAppStore();
+  const { currentView, setCurrentView, cards, openDailyNote } = useAppStore();
+
+  // 全局快捷键
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // ⌘D / Ctrl+D 打开今日日记
+      if ((e.metaKey || e.ctrlKey) && e.key === "d") {
+        e.preventDefault();
+        openDailyNote();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [openDailyNote]);
 
   // 计算每个分类的数量
   const getCounts = (type: ViewType) => {
@@ -61,7 +77,7 @@ export function AppSidebar({ onSearch, onCreateCard }: AppSidebarProps) {
       <SidebarContent>
         {/* 快捷操作 */}
         <SidebarGroup>
-          <SidebarGroupContent className="px-2 py-2">
+          <SidebarGroupContent className="px-2 py-2 space-y-2">
             <div className="flex gap-2">
               <Button
                 variant="outline"
@@ -77,6 +93,17 @@ export function AppSidebar({ onSearch, onCreateCard }: AppSidebarProps) {
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
+            {/* Daily Note 按钮 */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full justify-start gap-2"
+              onClick={openDailyNote}
+            >
+              <CalendarDays className="h-4 w-4 text-amber-500" />
+              今日日记
+              <kbd className="ml-auto text-xs text-muted-foreground">⌘D</kbd>
+            </Button>
           </SidebarGroupContent>
         </SidebarGroup>
 

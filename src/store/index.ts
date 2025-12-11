@@ -1,6 +1,18 @@
+/**
+ * Zentri Store - 应用状态管理
+ * 使用 Zustand 实现，按功能域拆分为多个 slice
+ */
 import { create } from "zustand";
-import * as api from "@/lib/api";
-import type { Card, ViewType, Source, Highlight } from "@/types";
+import * as api from "@/services/api";
+import type { Card, ViewType, Source, Highlight, EditorContent } from "@/types";
+
+/** 空文档的默认 JSON 结构 */
+const EMPTY_DOC: EditorContent = {
+  type: "doc",
+  content: [{ type: "paragraph" }],
+};
+
+// ==================== 类型定义 ====================
 
 interface AppState {
   // 初始化状态
@@ -29,28 +41,39 @@ interface AppState {
   setSearchQuery: (query: string) => void;
   setError: (error: string | null) => void;
 
-  // Card 操作 (异步)
+  // Card 操作
   loadCards: () => Promise<void>;
-  createCard: (
-    type: Card["type"],
-    title: string,
-    sourceId?: string
-  ) => Promise<Card>;
+  loadCardContent: (id: string) => Promise<void>;
+  createCard: (type: Card["type"], title: string, sourceId?: string) => Promise<Card>;
   updateCard: (id: string, updates: Partial<Card>) => Promise<void>;
   deleteCard: (id: string) => Promise<void>;
+  convertCard: (id: string, targetType: Card["type"]) => Promise<void>;
+  addCardReference: (projectId: string, cardId: string) => Promise<void>;
+  removeCardReference: (projectId: string, cardId: string) => Promise<void>;
 
-  // Source 操作 (异步)
+  // Source 操作
   loadSources: () => Promise<void>;
-  createSource: (
-    data: Omit<Source, "id" | "createdAt" | "updatedAt" | "noteIds">
-  ) => Promise<Source>;
+  createSource: (data: Omit<Source, "id" | "createdAt" | "updatedAt" | "noteIds">) => Promise<Source>;
   updateSource: (id: string, updates: Partial<Source>) => Promise<void>;
   deleteSource: (id: string) => Promise<void>;
 
-  // Highlight 操作 (异步)
+  // Highlight 操作
   loadHighlights: () => Promise<void>;
   createHighlight: (data: Omit<Highlight, "id" | "createdAt">) => Promise<Highlight>;
   deleteHighlight: (id: string) => Promise<void>;
+
+  // Tag 操作
+  renameTag: (oldTag: string, newTag: string) => Promise<void>;
+  deleteTag: (tag: string) => Promise<void>;
+
+  // Daily Note
+  openDailyNote: () => Promise<void>;
+  getDailyNote: (date: string) => Promise<Card | null>;
+
+  // 文件监听
+  startFileWatching: () => void;
+  stopFileWatching: () => void;
+  pollFileChanges: () => Promise<void>;
 
   // Computed
   filteredCards: () => Card[];
@@ -60,17 +83,20 @@ interface AppState {
   getNotesBySource: (sourceId: string) => Card[];
 }
 
+// 文件监听定时器 ID
+let fileWatchIntervalId: ReturnType<typeof setInterval> | null = null;
+
+// ==================== Store 实现 ====================
+
 export const useAppStore = create<AppState>((set, get) => ({
   // 初始状态
   isInitialized: false,
   isLoading: true,
   vaultPath: null,
   error: null,
-
   cards: [],
   sources: [],
   highlights: [],
-
   currentView: "all",
   selectedCardId: null,
   searchQuery: "",
@@ -81,59 +107,55 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       set({ isLoading: true, error: null });
 
-      // 检查是否在 Tauri 环境
       if (!api.isTauriEnv()) {
         console.log("Not in Tauri environment, using mock data");
-        set({
-          isInitialized: true,
-          isLoading: false,
-          vaultPath: null,
-        });
+        set({ isInitialized: true, isLoading: false, vaultPath: null });
         return;
       }
 
-      // 获取已保存的 Vault 路径
-      const vaultPath = await api.getVaultPath();
+      try {
+        const vaultPath = await api.vault.getPath();
 
-      if (vaultPath) {
-        set({ vaultPath });
+        if (vaultPath) {
+          set({ vaultPath });
 
-        // 加载数据
-        await Promise.all([
-          get().loadCards(),
-          get().loadSources(),
-          get().loadHighlights(),
-        ]);
+          await Promise.all([
+            get().loadCards(),
+            get().loadSources(),
+            get().loadHighlights(),
+          ]);
+
+          get().startFileWatching();
+        }
+      } catch (e) {
+        console.warn("Failed to get vault path or load data:", e);
       }
 
       set({ isInitialized: true, isLoading: false });
     } catch (err) {
       console.error("Failed to initialize:", err);
-      set({
-        isInitialized: true,
-        isLoading: false,
-        error: err instanceof Error ? err.message : "初始化失败",
-      });
+      set({ isInitialized: true, isLoading: false });
     }
   },
 
   setVaultPath: async (path: string) => {
     try {
       set({ isLoading: true, error: null });
+      get().stopFileWatching();
 
       if (api.isTauriEnv()) {
-        await api.setVaultPath(path);
+        await api.vault.setPath(path);
       }
 
       set({ vaultPath: path });
 
-      // 重新加载数据
       await Promise.all([
         get().loadCards(),
         get().loadSources(),
         get().loadHighlights(),
       ]);
 
+      get().startFileWatching();
       set({ isLoading: false });
     } catch (err) {
       console.error("Failed to set vault path:", err);
@@ -146,10 +168,16 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // ==================== UI Actions ====================
 
-  setCurrentView: (view) => set({ currentView: view, selectedCardId: null }),
-  selectCard: (id) => set({ selectedCardId: id }),
+  setCurrentView: (view) => set({ currentView: view }),
   setSearchQuery: (query) => set({ searchQuery: query }),
   setError: (error) => set({ error }),
+
+  selectCard: (id) => {
+    set({ selectedCardId: id });
+    if (id) {
+      get().loadCardContent(id);
+    }
+  },
 
   // ==================== Card 操作 ====================
 
@@ -157,115 +185,185 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       if (!api.isTauriEnv()) return;
 
-      const cardItems = await api.getCards();
-
-      // 将 CardListItem 转换为 Card (需要获取完整内容)
-      const cards: Card[] = cardItems.map((item) => ({
-        id: item.id,
-        type: item.type,
-        title: item.title,
-        content: "", // 列表不包含完整内容
-        tags: item.tags,
-        links: item.links,
-        sourceId: item.sourceId,
-        createdAt: item.createdAt,
-        updatedAt: item.modifiedAt,
+      const cardsData = await api.cards.getAll();
+      const cards: Card[] = cardsData.map((c) => ({
+        id: c.id,
+        type: c.type,
+        title: c.title,
+        // 列表加载时不包含内容，使用空文档占位（会触发懒加载）
+        content: { type: 'doc', content: [] },
+        tags: c.tags || [],
+        links: c.links || [],
+        sourceId: c.sourceId,
+        createdAt: c.createdAt,
+        updatedAt: c.modifiedAt,
       }));
 
       set({ cards });
     } catch (err) {
       console.error("Failed to load cards:", err);
-      set({ error: err instanceof Error ? err.message : "加载卡片失败" });
+    }
+  },
+
+  loadCardContent: async (id: string) => {
+    try {
+      if (!api.isTauriEnv()) return;
+
+      const card = await api.cards.get(id);
+      if (!card) return;
+
+      // 解析内容 - 支持 JSON 格式和旧的 Markdown 格式
+      const rawContent = typeof card.content === 'string' ? card.content : JSON.stringify(card.content);
+      const content = parseCardContent(rawContent);
+
+      set((state) => ({
+        cards: state.cards.map((c) =>
+          c.id === id ? { ...c, content, links: card.links || [] } : c
+        ),
+      }));
+    } catch (err) {
+      console.error("Failed to load card content:", err);
     }
   },
 
   createCard: async (type, title, sourceId) => {
-    try {
-      if (!api.isTauriEnv()) {
-        // Mock 模式
-        const newCard: Card = {
-          id: crypto.randomUUID(),
-          type,
-          title,
-          content: "",
-          tags: [],
-          links: [],
-          sourceId,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        set((state) => ({ cards: [newCard, ...state.cards] }));
-        return newCard;
-      }
-
-      const card = await api.createCard(type, title, sourceId);
-      set((state) => ({ cards: [card, ...state.cards] }));
-
-      // 如果有关联的 source，更新 source 的 noteIds
-      if (sourceId) {
-        set((state) => ({
-          sources: state.sources.map((s) =>
-            s.id === sourceId ? { ...s, noteIds: [...s.noteIds, card.id] } : s
-          ),
-        }));
-      }
-
-      return card;
-    } catch (err) {
-      console.error("Failed to create card:", err);
-      throw err;
+    if (!api.isTauriEnv()) {
+      const mockCard: Card = {
+        id: `mock-${Date.now()}`,
+        type,
+        title,
+        content: EMPTY_DOC,
+        tags: [],
+        links: [],
+        sourceId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      set((state) => ({ cards: [mockCard, ...state.cards] }));
+      return mockCard;
     }
+
+    const created = await api.cards.create(type, title, sourceId);
+    // 解析后端返回的内容
+    const rawContent = typeof created.content === 'string' ? created.content : JSON.stringify(created.content);
+    const content = parseCardContent(rawContent);
+    const card: Card = {
+      id: created.id,
+      type: created.type,
+      title: created.title,
+      content,
+      tags: created.tags || [],
+      links: created.links || [],
+      sourceId: created.sourceId,
+      createdAt: created.createdAt,
+      updatedAt: created.updatedAt,
+    };
+
+    set((state) => ({ cards: [card, ...state.cards] }));
+    return card;
   },
 
   updateCard: async (id, updates) => {
-    try {
-      // 立即更新本地状态（乐观更新）
-      set((state) => ({
-        cards: state.cards.map((card) =>
-          card.id === id ? { ...card, ...updates, updatedAt: Date.now() } : card
-        ),
-      }));
-
-      // 同步到后端
-      if (api.isTauriEnv()) {
-        await api.updateCard(id, {
-          title: updates.title,
-          content: updates.content,
-          tags: updates.tags,
-          cardType: updates.type,
-          links: updates.links,
-        });
-      }
-    } catch (err) {
-      console.error("Failed to update card:", err);
-      // 回滚或重新加载
-      get().loadCards();
-      throw err;
+    // 序列化内容为 JSON 字符串（用于后端存储）
+    let contentForBackend: string | undefined;
+    if (updates.content !== undefined) {
+      contentForBackend = typeof updates.content === 'string'
+        ? updates.content
+        : JSON.stringify(updates.content);
     }
+
+    // 从内容中提取 wiki links（需要传入 cards 以便通过标题查找ID）
+    const cards = get().cards;
+    const links = updates.content ? extractWikiLinksFromContent(updates.content, cards) : undefined;
+
+    if (api.isTauriEnv()) {
+      console.log("Calling API updateCard:", { id, contentLength: contentForBackend?.length });
+      await api.cards.update(id, {
+        title: updates.title,
+        content: contentForBackend,
+        tags: updates.tags,
+        cardType: updates.type,
+        links,
+      });
+    } else {
+      console.warn("Skipping API update (not in Tauri env)");
+    }
+
+    set((state) => ({
+      cards: state.cards.map((c) =>
+        c.id === id
+          ? { ...c, ...updates, links: links || c.links, updatedAt: Date.now() }
+          : c
+      ),
+    }));
   },
 
   deleteCard: async (id) => {
-    try {
-      // 立即更新本地状态
-      set((state) => ({
-        cards: state.cards.filter((card) => card.id !== id),
-        selectedCardId: state.selectedCardId === id ? null : state.selectedCardId,
-        // 从 sources 的 noteIds 中移除
-        sources: state.sources.map((s) => ({
-          ...s,
-          noteIds: s.noteIds.filter((nid) => nid !== id),
-        })),
-      }));
-
-      // 同步到后端
-      if (api.isTauriEnv()) {
-        await api.deleteCard(id);
-      }
-    } catch (err) {
-      console.error("Failed to delete card:", err);
-      get().loadCards();
-      throw err;
+    if (api.isTauriEnv()) {
+      await api.cards.delete(id);
     }
+
+    set((state) => ({
+      cards: state.cards.filter((c) => c.id !== id),
+      selectedCardId: state.selectedCardId === id ? null : state.selectedCardId,
+    }));
+  },
+
+  convertCard: async (id, targetType) => {
+    const card = get().cards.find((c) => c.id === id);
+    if (!card) return;
+    await get().updateCard(id, { type: targetType });
+  },
+
+  addCardReference: async (projectId, cardId) => {
+    const project = get().cards.find((c) => c.id === projectId);
+    if (!project) return;
+
+    const existingLinks = project.links || [];
+    if (existingLinks.includes(cardId)) return;
+
+    await get().updateCard(projectId, { links: [...existingLinks, cardId] });
+  },
+
+  removeCardReference: async (projectId, cardId) => {
+    const project = get().cards.find((c) => c.id === projectId);
+    if (!project) return;
+
+    const links = (project.links || []).filter((l) => l !== cardId);
+    await get().updateCard(projectId, { links });
+  },
+
+  // ==================== Tag 操作 ====================
+
+  renameTag: async (oldTag, newTag) => {
+    if (!oldTag || !newTag || oldTag === newTag) return;
+
+    const affectedCards = get().cards.filter(card => card.tags.includes(oldTag));
+
+    // 批量更新所有受影响的卡片
+    const updates = affectedCards.map(async (card) => {
+      const newTags = card.tags.map(t => t === oldTag ? newTag : t);
+      // 去重
+      const uniqueTags = Array.from(new Set(newTags));
+
+      await get().updateCard(card.id, { tags: uniqueTags });
+    });
+
+    await Promise.all(updates);
+  },
+
+  deleteTag: async (tag) => {
+    if (!tag) return;
+
+    const affectedCards = get().cards.filter(card => card.tags.includes(tag));
+
+    // 批量更新所有受影响的卡片
+    const updates = affectedCards.map(async (card) => {
+      const newTags = card.tags.filter(t => t !== tag);
+      await get().updateCard(card.id, { tags: newTags });
+    });
+
+    await Promise.all(updates);
   },
 
   // ==================== Source 操作 ====================
@@ -273,88 +371,51 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadSources: async () => {
     try {
       if (!api.isTauriEnv()) return;
-
-      const sources = await api.getSources();
+      const sources = await api.sources.getAll();
       set({ sources });
     } catch (err) {
       console.error("Failed to load sources:", err);
-      set({ error: err instanceof Error ? err.message : "加载文献失败" });
     }
   },
 
   createSource: async (data) => {
-    try {
-      if (!api.isTauriEnv()) {
-        const newSource: Source = {
-          ...data,
-          id: crypto.randomUUID(),
-          noteIds: [],
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        set((state) => ({ sources: [newSource, ...state.sources] }));
-        return newSource;
-      }
-
-      const source = await api.createSource({
-        type: data.type,
-        title: data.title,
-        author: data.author,
-        url: data.url,
-        description: data.description,
-        tags: data.tags,
-      });
-      set((state) => ({ sources: [source, ...state.sources] }));
-      return source;
-    } catch (err) {
-      console.error("Failed to create source:", err);
-      throw err;
+    if (!api.isTauriEnv()) {
+      const mockSource: Source = {
+        id: `mock-source-${Date.now()}`,
+        ...data,
+        noteIds: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      set((state) => ({ sources: [mockSource, ...state.sources] }));
+      return mockSource;
     }
+
+    const source = await api.sources.create(data);
+    set((state) => ({ sources: [source, ...state.sources] }));
+    return source;
   },
 
   updateSource: async (id, updates) => {
-    try {
-      set((state) => ({
-        sources: state.sources.map((source) =>
-          source.id === id
-            ? { ...source, ...updates, updatedAt: Date.now() }
-            : source
-        ),
-      }));
-
-      if (api.isTauriEnv()) {
-        await api.updateSource(id, {
-          title: updates.title,
-          author: updates.author,
-          url: updates.url,
-          description: updates.description,
-          tags: updates.tags,
-          progress: updates.progress,
-          lastReadAt: updates.lastReadAt,
-        });
-      }
-    } catch (err) {
-      console.error("Failed to update source:", err);
-      get().loadSources();
-      throw err;
+    if (api.isTauriEnv()) {
+      await api.sources.update(id, updates);
     }
+
+    set((state) => ({
+      sources: state.sources.map((s) =>
+        s.id === id ? { ...s, ...updates, updatedAt: Date.now() } : s
+      ),
+    }));
   },
 
   deleteSource: async (id) => {
-    try {
-      set((state) => ({
-        sources: state.sources.filter((source) => source.id !== id),
-        highlights: state.highlights.filter((h) => h.sourceId !== id),
-      }));
-
-      if (api.isTauriEnv()) {
-        await api.deleteSource(id);
-      }
-    } catch (err) {
-      console.error("Failed to delete source:", err);
-      get().loadSources();
-      throw err;
+    if (api.isTauriEnv()) {
+      await api.sources.delete(id);
     }
+
+    set((state) => ({
+      sources: state.sources.filter((s) => s.id !== id),
+    }));
   },
 
   // ==================== Highlight 操作 ====================
@@ -362,8 +423,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadHighlights: async () => {
     try {
       if (!api.isTauriEnv()) return;
-
-      const highlights = await api.getAllHighlights();
+      const highlights = await api.highlights.getAll();
       set({ highlights });
     } catch (err) {
       console.error("Failed to load highlights:", err);
@@ -371,46 +431,182 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   createHighlight: async (data) => {
-    try {
-      if (!api.isTauriEnv()) {
-        const newHighlight: Highlight = {
-          ...data,
-          id: crypto.randomUUID(),
-          createdAt: Date.now(),
-        };
-        set((state) => ({ highlights: [...state.highlights, newHighlight] }));
-        return newHighlight;
-      }
-
-      const highlight = await api.createHighlight({
-        sourceId: data.sourceId,
-        cardId: data.cardId,
-        content: data.content,
-        note: data.note,
-        position: data.position,
-        color: data.color,
-      });
-      set((state) => ({ highlights: [...state.highlights, highlight] }));
-      return highlight;
-    } catch (err) {
-      console.error("Failed to create highlight:", err);
-      throw err;
+    if (!api.isTauriEnv()) {
+      const mockHighlight: Highlight = {
+        id: `mock-highlight-${Date.now()}`,
+        ...data,
+        createdAt: Date.now(),
+      };
+      set((state) => ({ highlights: [mockHighlight, ...state.highlights] }));
+      return mockHighlight;
     }
+
+    const highlight = await api.highlights.create(data);
+    set((state) => ({ highlights: [highlight, ...state.highlights] }));
+    return highlight;
   },
 
   deleteHighlight: async (id) => {
-    try {
-      set((state) => ({
-        highlights: state.highlights.filter((h) => h.id !== id),
-      }));
+    if (api.isTauriEnv()) {
+      await api.highlights.delete(id);
+    }
 
-      if (api.isTauriEnv()) {
-        await api.deleteHighlight(id);
+    set((state) => ({
+      highlights: state.highlights.filter((h) => h.id !== id),
+    }));
+  },
+
+  // ==================== Daily Note ====================
+
+  openDailyNote: async () => {
+    try {
+      if (!api.isTauriEnv()) {
+        const today = new Date().toISOString().split("T")[0];
+        const mockCard: Card = {
+          id: `00_Inbox/${today}.md`,
+          type: "fleeting",
+          title: `日记 ${today}`,
+          content: {
+            type: 'doc', content: [
+              { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: today }] },
+              { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: '今日待办' }] },
+              {
+                type: 'taskList', content: [
+                  { type: 'taskItem', attrs: { checked: false }, content: [{ type: 'paragraph' }] }
+                ]
+              },
+              { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: '笔记' }] },
+              { type: 'paragraph' }
+            ]
+          },
+          tags: ["daily"],
+          links: [],
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        set((state) => {
+          const exists = state.cards.find((c) => c.id === mockCard.id);
+          if (!exists) {
+            return { cards: [mockCard, ...state.cards], selectedCardId: mockCard.id };
+          }
+          return { selectedCardId: mockCard.id };
+        });
+        return;
+      }
+
+      const card = await api.dailyNote.getOrCreate();
+
+      set((state) => {
+        const exists = state.cards.find((c) => c.id === card.id);
+        if (!exists) {
+          return {
+            cards: [card, ...state.cards],
+            selectedCardId: card.id,
+            currentView: "all" as const,
+          };
+        }
+        return { selectedCardId: card.id, currentView: "all" as const };
+      });
+    } catch (err) {
+      console.error("Failed to open daily note:", err);
+    }
+  },
+
+  getDailyNote: async (date: string) => {
+    try {
+      if (!api.isTauriEnv()) return null;
+      return await api.dailyNote.get(date);
+    } catch (err) {
+      console.error("Failed to get daily note:", err);
+      return null;
+    }
+  },
+
+  // ==================== 文件监听 ====================
+
+  startFileWatching: () => {
+    if (fileWatchIntervalId !== null) return;
+    if (!api.isTauriEnv()) return;
+
+    console.log("Starting file watching...");
+    fileWatchIntervalId = setInterval(() => {
+      get().pollFileChanges();
+    }, 2000);
+  },
+
+  stopFileWatching: () => {
+    if (fileWatchIntervalId !== null) {
+      console.log("Stopping file watching...");
+      clearInterval(fileWatchIntervalId);
+      fileWatchIntervalId = null;
+    }
+  },
+
+  pollFileChanges: async () => {
+    try {
+      if (!api.isTauriEnv()) return;
+
+      const changes = await api.watcher.pollChanges();
+
+      if (changes.changedIds.length === 0 && changes.removedIds.length === 0) {
+        return;
+      }
+
+      console.log("File changes detected:", changes);
+
+      // 处理删除的卡片
+      if (changes.removedIds.length > 0) {
+        set((state) => ({
+          cards: state.cards.filter((c) => !changes.removedIds.includes(c.id)),
+          selectedCardId: changes.removedIds.includes(state.selectedCardId || "")
+            ? null
+            : state.selectedCardId,
+        }));
+      }
+
+      // 处理变化的卡片
+      if (changes.changedIds.length > 0) {
+        const updatedCards = await Promise.all(
+          changes.changedIds.map(async (id) => {
+            try {
+              return await api.cards.get(id);
+            } catch {
+              return null;
+            }
+          })
+        );
+
+        set((state) => {
+          const newCards = [...state.cards];
+
+          for (const card of updatedCards) {
+            if (!card) continue;
+
+            const existingIndex = newCards.findIndex((c) => c.id === card.id);
+            const normalizedCard: Card = {
+              id: card.id,
+              type: card.type,
+              title: card.title,
+              content: card.content || "",
+              tags: card.tags || [],
+              links: card.links || [],
+              sourceId: card.sourceId,
+              createdAt: card.createdAt,
+              updatedAt: card.updatedAt,
+            };
+
+            if (existingIndex >= 0) {
+              newCards[existingIndex] = normalizedCard;
+            } else {
+              newCards.unshift(normalizedCard);
+            }
+          }
+
+          return { cards: newCards };
+        });
       }
     } catch (err) {
-      console.error("Failed to delete highlight:", err);
-      get().loadHighlights();
-      throw err;
+      console.error("Failed to poll file changes:", err);
     }
   },
 
@@ -420,33 +616,115 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { cards, currentView, searchQuery } = get();
     let filtered = cards;
 
-    // Filter by view
+    // 按类型过滤
     if (currentView !== "all") {
       filtered = filtered.filter((card) => card.type === currentView);
     }
 
-    // Filter by search
+    // 按搜索词过滤
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(
-        (card) =>
-          card.title.toLowerCase().includes(query) ||
-          card.content.toLowerCase().includes(query) ||
-          card.tags.some((tag) => tag.toLowerCase().includes(query))
+        (card) => {
+          return (
+            card.title.toLowerCase().includes(query) ||
+            // 简单处理：仅检查 tags，或者需要实现从 JSON 提取文本的逻辑
+            // 目前暂不支持全文搜索 JSON 内容
+            card.tags.some((tag) => tag.toLowerCase().includes(query))
+          );
+        }
       );
     }
 
-    // Sort by updated time
     return filtered.sort((a, b) => b.updatedAt - a.updatedAt);
   },
 
   getCardById: (id) => get().cards.find((card) => card.id === id),
   getSourceById: (id) => get().sources.find((source) => source.id === id),
-  getHighlightsBySource: (sourceId) =>
-    get().highlights.filter((h) => h.sourceId === sourceId),
+  getHighlightsBySource: (sourceId) => get().highlights.filter((h) => h.sourceId === sourceId),
   getNotesBySource: (sourceId) => {
     const source = get().sources.find((s) => s.id === sourceId);
     if (!source) return [];
     return get().cards.filter((card) => source.noteIds.includes(card.id));
   },
 }));
+
+// ==================== 工具函数 ====================
+
+/**
+ * 解析卡片内容 - 支持 JSON 格式和旧的字符串格式
+ */
+function parseCardContent(content: string | undefined | null): EditorContent {
+  if (!content) {
+    return { type: "doc", content: [{ type: "paragraph" }] };
+  }
+
+  // 尝试解析为 JSON
+  const trimmed = content.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      // 验证是否是有效的 TipTap JSON 格式
+      if (parsed.type === "doc") {
+        return parsed as EditorContent;
+      }
+    } catch {
+      // 解析失败
+    }
+  }
+
+  // 如果解析失败或不是 JSON，返回空文档结构（不再支持 raw string）
+  return { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: content }] }] };
+}
+
+/**
+ * 从内容中提取 wiki links
+ * 支持 JSON 格式和字符串格式
+ */
+function extractWikiLinksFromContent(content: EditorContent, cards: Card[] = []): string[] {
+  const links: string[] = [];
+  extractLinksFromNode(content, links, cards);
+  return links;
+}
+
+/**
+ * 递归从 TipTap JSON 节点中提取 wiki links
+ * 注意：WikiLink 是 Mark，不是 Node，所以需要从文本中提取 [[title]] 格式
+ */
+function extractLinksFromNode(node: EditorContent | { type: string; attrs?: Record<string, unknown>; content?: unknown[]; marks?: Array<{ type: string; attrs?: Record<string, unknown> }>; text?: string }, links: string[], cards: Card[] = []): void {
+  // 如果是文本节点，检查是否有 wikiLink mark
+  if (node.type === "text" && "text" in node && node.text) {
+    const text = node.text;
+    // 检查是否有 wikiLink mark
+    if ("marks" in node && node.marks) {
+      const wikiLinkMark = node.marks.find(m => m.type === "wikiLink");
+      if (wikiLinkMark && wikiLinkMark.attrs) {
+        const href = wikiLinkMark.attrs.href as string | undefined;
+        if (href && !links.includes(href)) {
+          links.push(href);
+        }
+      }
+    }
+
+    // 同时从文本中提取 [[title]] 格式（作为后备方案）
+    const wikiLinkRegex = /\[\[([^\]]+)\]\]/g;
+    let match;
+    while ((match = wikiLinkRegex.exec(text)) !== null) {
+      const title = match[1].trim();
+      // 通过标题查找卡片ID
+      const card = cards.find(c => c.title === title);
+      if (card && !links.includes(card.id)) {
+        links.push(card.id);
+      }
+    }
+  }
+
+  // 递归处理子节点
+  if (node.content && Array.isArray(node.content)) {
+    for (const child of node.content) {
+      if (typeof child === 'object' && child !== null) {
+        extractLinksFromNode(child as { type: string; attrs?: Record<string, unknown>; content?: unknown[]; marks?: Array<{ type: string; attrs?: Record<string, unknown> }>; text?: string }, links, cards);
+      }
+    }
+  }
+}

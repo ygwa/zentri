@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -10,14 +9,20 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store";
-import type { Card, CardType, ViewType } from "@/types";
+import type { Card, CardType, ViewType, EditorContent } from "@/types";
+
+// 辅助函数：将 content 转换为字符串
+function contentToString(content: string | EditorContent | undefined): string {
+  if (!content) return "";
+  if (typeof content === "string") return content;
+  return JSON.stringify(content);
+}
 import {
   Sparkles,
   BookOpen,
   StickyNote,
   FolderKanban,
   Link2,
-  MoreHorizontal,
   Plus,
   Inbox,
   Archive,
@@ -122,7 +127,7 @@ function NoteCard({
           {card.title || "无标题"}
         </h3>
         <p className="mb-3 text-sm text-muted-foreground line-clamp-3">
-          {card.content || "点击开始编辑..."}
+          {contentToString(card.content) || "点击开始编辑..."}
         </p>
       </div>
 
@@ -158,7 +163,7 @@ function NoteCard({
 
 // 卡片盒组件 - 像真正的盒子
 function CardBox({
-  type,
+  type: _type,
   label,
   icon: Icon,
   count,
@@ -470,7 +475,7 @@ export function CardWorkspace({ onSearch, onCreateCard }: CardWorkspaceProps) {
                         {card.title || "无标题"}
                       </p>
                       <p className="text-sm text-muted-foreground truncate">
-                        {card.content || "暂无内容"}
+                        {contentToString(card.content) || "暂无内容"}
                       </p>
                     </div>
                     <div className="shrink-0 text-xs text-muted-foreground">

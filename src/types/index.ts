@@ -1,12 +1,29 @@
 // 卡片类型
 export type CardType = "fleeting" | "literature" | "permanent" | "project";
 
+/**
+ * TipTap/ProseMirror JSON 内容格式
+ * 用于无损存储编辑器内容
+ */
+export interface EditorContent {
+  type: "doc";
+  content?: EditorNode[];
+}
+
+export interface EditorNode {
+  type: string;
+  attrs?: Record<string, unknown>;
+  content?: EditorNode[];
+  marks?: Array<{ type: string; attrs?: Record<string, unknown> }>;
+  text?: string;
+}
+
 // 卡片数据结构
 export interface Card {
   id: string;
   type: CardType;
   title: string;
-  content: string;
+  content: EditorContent;
   tags: string[];
   links: string[]; // 关联的卡片 ID
   sourceId?: string; // 关联的文献源 ID（用于文献笔记）

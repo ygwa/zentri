@@ -1,8 +1,8 @@
 import { useEffect } from "react";
-import { CardDesk } from "@/components/card-desk";
+import { MainLayout } from "@/components/layout/main-layout";
 import { VaultSelector } from "@/components/vault-selector";
 import { useAppStore } from "@/store";
-import { isTauriEnv } from "@/lib/api";
+import { isTauriEnv } from "@/services/api";
 
 import "./App.css";
 
@@ -78,7 +78,7 @@ function App() {
   // 主界面
   return (
     <div className="h-full w-full overflow-hidden">
-      <CardDesk />
+      <MainLayout />
     </div>
   );
 }

@@ -55,9 +55,9 @@ export function CreateCardDialog({ open, onOpenChange }: CreateCardDialogProps) 
   const [type, setType] = useState<CardType>("fleeting");
   const [title, setTitle] = useState("");
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!title.trim()) return;
-    const card = createCard(type, title.trim());
+    const card = await createCard(type, title.trim());
     selectCard(card.id);
     onOpenChange(false);
     setTitle("");

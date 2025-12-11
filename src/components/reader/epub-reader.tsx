@@ -9,12 +9,16 @@ import {
   Highlighter,
   Plus,
   List,
+  GripVertical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getFileUrl } from "@/lib/file-url";
 import type { Highlight } from "@/types";
 
 interface EpubReaderProps {
   url: string;
+  sourceId?: string;
+  sourceTitle?: string;
   highlights?: Highlight[];
   onHighlight?: (text: string, cfiRange: string) => void;
   onAddToNote?: (text: string, cfiRange: string) => void;
@@ -24,6 +28,8 @@ interface EpubReaderProps {
 
 export function EpubReader({
   url,
+  sourceId,
+  sourceTitle,
   highlights = [],
   onHighlight,
   onAddToNote,
@@ -33,18 +39,37 @@ export function EpubReader({
   const containerRef = useRef<HTMLDivElement>(null);
   const bookRef = useRef<Book | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
+  const initializingRef = useRef(false);
+  const currentUrlRef = useRef<string | null>(null);
   
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [fontSize, setFontSize] = useState(100);
-  const [selectedText, setSelectedText] = useState<{ text: string; cfiRange: string } | null>(null);
+  const [selectedText, setSelectedText] = useState<{ 
+    text: string; 
+    cfiRange: string;
+    position?: { x: number; y: number };
+  } | null>(null);
   const [showToc, setShowToc] = useState(false);
   const [toc, setToc] = useState<{ label: string; href: string }[]>([]);
+  
+  // 稳定的回调引用
+  const onProgressRef = useRef(onProgress);
+  onProgressRef.current = onProgress;
 
   // 初始化阅读器
   useEffect(() => {
     if (!containerRef.current || !url) return;
+    
+    // 防止重复初始化
+    if (initializingRef.current || currentUrlRef.current === url) {
+      return;
+    }
+
+    let isMounted = true;
+    initializingRef.current = true;
+    currentUrlRef.current = url;
 
     const initBook = async () => {
       try {
@@ -54,34 +79,92 @@ export function EpubReader({
         // 清理旧实例
         if (bookRef.current) {
           bookRef.current.destroy();
+          bookRef.current = null;
+          renditionRef.current = null;
         }
 
-        // 创建新的 Book 实例
-        const book = ePub(url);
+        // 转换本地文件路径为可访问的 URL
+        const fileUrl = await getFileUrl(url);
+        console.log("Loading EPUB from:", fileUrl);
+
+        // 在 Tauri 环境中，我们需要先获取文件内容然后创建 ArrayBuffer
+        let book: Book;
+        if (fileUrl.startsWith("asset://") || fileUrl.startsWith("http://asset.localhost")) {
+          console.log("Fetching EPUB via asset protocol...");
+          try {
+            const response = await fetch(fileUrl);
+            if (!response.ok) {
+              throw new Error(`Failed to fetch EPUB: ${response.status}`);
+            }
+            const arrayBuffer = await response.arrayBuffer();
+            console.log("EPUB fetched, size:", arrayBuffer.byteLength);
+            book = ePub(arrayBuffer);
+          } catch (fetchErr) {
+            console.error("Failed to fetch EPUB:", fetchErr);
+            throw fetchErr;
+          }
+        } else {
+          // 直接从 URL 加载
+          book = ePub(fileUrl);
+        }
         bookRef.current = book;
 
         // 等待书籍加载
         await book.ready;
+        console.log("EPUB book ready");
+
+        if (!isMounted) return;
 
         // 获取目录
         const navigation = await book.loaded.navigation;
-        setToc(
-          navigation.toc.map((item) => ({
-            label: item.label,
-            href: item.href,
-          }))
-        );
+        const tocItems = navigation.toc.map((item) => ({
+          label: item.label.trim(),
+          href: item.href,
+        }));
+        setToc(tocItems);
+        console.log("EPUB TOC loaded:", tocItems.length, "items");
 
-        // 渲染到容器
-        const rendition = book.renderTo(containerRef.current!, {
-          width: "100%",
-          height: "100%",
+        if (!isMounted || !containerRef.current) return;
+
+        // 渲染到容器 - 使用固定像素尺寸而不是百分比
+        const container = containerRef.current;
+        let rect = container.getBoundingClientRect();
+        
+        // 如果容器尺寸为 0，等待一帧后重新获取
+        if (rect.width === 0 || rect.height === 0) {
+          await new Promise(resolve => requestAnimationFrame(resolve));
+          rect = container.getBoundingClientRect();
+        }
+        
+        const width = Math.max(rect.width, 300);
+        const height = Math.max(rect.height, 400);
+        console.log("EPUB container size:", width, "x", height);
+        
+        const rendition = book.renderTo(container, {
+          width,
+          height,
           spread: "none",
+          flow: "paginated",
+          allowScriptedContent: true,
         });
         renditionRef.current = rendition;
 
-        // 显示内容
-        await rendition.display();
+        // 监听渲染完成
+        rendition.on("rendered", (section: { index: number }) => {
+          console.log("EPUB section rendered:", section.index);
+          if (isMounted) {
+            setIsLoading(false);
+          }
+          
+          // 修复 iframe sandbox 权限问题
+          const iframes = container.querySelectorAll("iframe");
+          iframes.forEach((iframe) => {
+            if (iframe.sandbox) {
+              iframe.sandbox.add("allow-scripts");
+              iframe.sandbox.add("allow-same-origin");
+            }
+          });
+        });
 
         // 设置主题样式
         rendition.themes.default({
@@ -89,9 +172,11 @@ export function EpubReader({
             "font-family": "system-ui, -apple-system, sans-serif",
             "line-height": "1.8",
             "padding": "20px 40px",
+            "background": "#fff",
           },
           "a": {
-            "color": "inherit",
+            "color": "#2563eb",
+            "text-decoration": "underline",
           },
         });
 
@@ -99,16 +184,36 @@ export function EpubReader({
         rendition.on("relocated", (location: { start: { percentage: number } }) => {
           const percent = Math.round(location.start.percentage * 100);
           setProgress(percent);
-          onProgress?.(percent);
+          onProgressRef.current?.(percent);
         });
 
         // 监听文本选择
         rendition.on("selected", (cfiRange: string, contents: Contents) => {
           const selection = contents.window.getSelection();
           if (selection && selection.toString().trim()) {
+            // 获取选中文本的位置
+            let position: { x: number; y: number } | undefined;
+            try {
+              const range = selection.getRangeAt(0);
+              const rect = range.getBoundingClientRect();
+              const iframe = container.querySelector("iframe");
+              if (iframe && rect) {
+                const iframeRect = iframe.getBoundingClientRect();
+                const containerRect = container.getBoundingClientRect();
+                // 计算相对于容器的位置
+                position = {
+                  x: iframeRect.left - containerRect.left + rect.left + rect.width / 2,
+                  y: iframeRect.top - containerRect.top + rect.top,
+                };
+              }
+            } catch (e) {
+              console.warn("Could not get selection position:", e);
+            }
+            
             setSelectedText({
               text: selection.toString().trim(),
               cfiRange,
+              position,
             });
           }
         });
@@ -118,22 +223,80 @@ export function EpubReader({
           setSelectedText(null);
         });
 
-        setIsLoading(false);
+        // 显示内容 - 添加超时保护
+        console.log("Displaying EPUB...");
+        const displayPromise = rendition.display();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("Display timeout")), 10000)
+        );
+        
+        try {
+          await Promise.race([displayPromise, timeoutPromise]);
+          console.log("EPUB display() completed");
+        } catch (displayErr) {
+          console.warn("EPUB display warning:", displayErr);
+          // 不抛出错误，可能只是超时但内容已经加载
+        }
+
+        // 确保加载状态更新
+        if (isMounted) {
+          setIsLoading(false);
+        }
+        
+        initializingRef.current = false;
       } catch (err) {
         console.error("Failed to load EPUB:", err);
-        setError("无法加载 EPUB 文件");
-        setIsLoading(false);
+        if (isMounted) {
+          setError(`无法加载 EPUB 文件: ${err instanceof Error ? err.message : String(err)}`);
+          setIsLoading(false);
+        }
+        initializingRef.current = false;
       }
     };
 
     initBook();
 
     return () => {
+      isMounted = false;
       if (bookRef.current) {
         bookRef.current.destroy();
+        bookRef.current = null;
+        renditionRef.current = null;
       }
+      currentUrlRef.current = null;
+      initializingRef.current = false;
     };
-  }, [url, onProgress]);
+  }, [url]); // 只依赖 url，使用 ref 来访问回调
+
+  // 监听容器尺寸变化，更新 epub.js 布局
+  useEffect(() => {
+    if (!containerRef.current || !renditionRef.current) return;
+    
+    const container = containerRef.current;
+    let resizeTimeout: ReturnType<typeof setTimeout>;
+    
+    const resizeObserver = new ResizeObserver((entries) => {
+      // 使用防抖避免频繁调用
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        const entry = entries[0];
+        if (entry && renditionRef.current) {
+          const { width, height } = entry.contentRect;
+          if (width > 0 && height > 0) {
+            console.log("Resizing EPUB to:", width, "x", height);
+            renditionRef.current.resize(width, height);
+          }
+        }
+      }, 100);
+    });
+    
+    resizeObserver.observe(container);
+    
+    return () => {
+      clearTimeout(resizeTimeout);
+      resizeObserver.disconnect();
+    };
+  }, [isLoading]); // 在加载完成后开始监听
 
   // 应用高亮
   useEffect(() => {
@@ -164,9 +327,18 @@ export function EpubReader({
   }, []);
 
   // 跳转到目录项
-  const goToToc = useCallback((href: string) => {
-    renditionRef.current?.display(href);
-    setShowToc(false);
+  const goToToc = useCallback(async (href: string) => {
+    if (!renditionRef.current) {
+      console.warn("Rendition not ready");
+      return;
+    }
+    try {
+      console.log("Navigating to:", href);
+      setShowToc(false);
+      await renditionRef.current.display(href);
+    } catch (err) {
+      console.error("Failed to navigate to TOC item:", err);
+    }
   }, []);
 
   // 高亮选中文本
@@ -287,12 +459,40 @@ export function EpubReader({
         </button>
       </div>
 
-      {/* 选中文本工具栏 */}
+      {/* 选中文本工具栏 - 跟随选中位置 */}
       {selectedText && (
-        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-popover border rounded-lg shadow-lg p-2 flex items-center gap-2 z-50">
-          <span className="text-xs text-muted-foreground max-w-[200px] truncate">
-            "{selectedText.text}"
-          </span>
+        <div 
+          className="absolute bg-popover border rounded-lg shadow-lg p-2 flex items-center gap-2 z-50"
+          style={selectedText.position ? {
+            // 位置需要加上工具栏高度偏移（约 40px）
+            left: `${Math.max(100, Math.min(selectedText.position.x, (containerRef.current?.offsetWidth || 400) - 100))}px`,
+            top: `${Math.max(50, selectedText.position.y + 40)}px`, // +40px for toolbar
+            transform: 'translateX(-50%)',
+          } : {
+            bottom: '80px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+          }}
+        >
+          <div 
+            className="cursor-grab hover:bg-muted p-1 rounded active:cursor-grabbing"
+            draggable
+            onDragStart={(e) => {
+              if (sourceId) {
+                e.dataTransfer.setData("application/x-zentri-reference", JSON.stringify({
+                  sourceId,
+                  sourceTitle: sourceTitle || "EPUB",
+                  text: selectedText.text,
+                  cfi: selectedText.cfiRange,
+                  type: "epub",
+                }));
+                e.dataTransfer.effectAllowed = "copy";
+              }
+            }}
+            title="拖拽到编辑器以创建引用"
+          >
+            <GripVertical className="h-4 w-4 text-muted-foreground" />
+          </div>
           <Button
             variant="ghost"
             size="sm"
@@ -312,7 +512,7 @@ export function EpubReader({
             }}
           >
             <Plus className="h-3 w-3" />
-            添加到笔记
+            笔记
           </Button>
         </div>
       )}

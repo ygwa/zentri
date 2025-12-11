@@ -2,8 +2,15 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store";
-import type { Card, CardType } from "@/types";
+import type { Card, CardType, EditorContent } from "@/types";
 import { Sparkles, BookOpen, StickyNote, FolderKanban } from "lucide-react";
+
+// 辅助函数：将 content 转换为字符串
+function contentToString(content: string | EditorContent | undefined): string {
+  if (!content) return "";
+  if (typeof content === "string") return content;
+  return JSON.stringify(content);
+}
 
 const typeConfig: Record<CardType, { icon: React.ElementType; color: string }> = {
   fleeting: { icon: Sparkles, color: "text-amber-500" },
@@ -61,7 +68,7 @@ function CardItem({ card, isSelected }: { card: Card; isSelected: boolean }) {
 
       {/* 预览 */}
       <p className="mb-2 text-sm text-muted-foreground line-clamp-2">
-        {card.content || "暂无内容"}
+        {contentToString(card.content) || "暂无内容"}
       </p>
 
       {/* 标签 */}

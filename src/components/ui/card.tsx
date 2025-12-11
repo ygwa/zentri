@@ -7,10 +7,11 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="card"
       className={cn(
-        // 卡片基础样式：纯白背景 + 弥散阴影
-        "bg-card text-card-foreground flex flex-col rounded-xl border",
-        "shadow-[0_2px_8px_rgba(0,0,0,0.04),0_1px_2px_rgba(0,0,0,0.03)]",
-        "transition-all duration-200",
+        // 卡片基础样式：纯白背景 + 弥散阴影（建议书2.1）
+        "bg-card text-card-foreground flex flex-col rounded-xl border border-border/60",
+        // 弥散阴影：多层叠加创造柔和的"浮起"效果
+        "shadow-[0_1px_2px_rgba(0,0,0,0.04),0_2px_4px_rgba(0,0,0,0.04),0_4px_12px_rgba(0,0,0,0.05)]",
+        "transition-all duration-250 ease-out",
         className
       )}
       {...props}

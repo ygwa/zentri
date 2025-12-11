@@ -42,42 +42,44 @@
 
 :root {
   --radius: 0.625rem;
-  /* 建议1: 加深背景色为冷灰(#F0F2F5)，让卡片"浮"起来 */
-  --background: oklch(0.955 0.003 265);
-  --foreground: oklch(0.141 0.005 285.823);
-  /* 建议1: 卡片保持纯白 */
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.141 0.005 285.823);
-  /* 建议5: 数字等宽字体 - 使用更优雅的字体组合 */
+  /* 专业感配色：冷灰背景，沉稳色调 */
+  --background: oklch(0.965 0.004 250);  /* 偏蓝冷灰 */
+  --foreground: oklch(0.18 0.01 265);
+  /* 卡片：略带暖调的纯白 */
+  --card: oklch(0.995 0.002 85);
+  --card-foreground: oklch(0.18 0.01 265);
+  /* 数字等宽字体 */
   --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", ui-monospace, monospace;
   --font-tabular: "Inter var", "DIN Alternate", system-ui, sans-serif;
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.141 0.005 285.823);
-  --primary: oklch(0.45 0.15 250);
+  --popover: oklch(0.995 0.002 85);
+  --popover-foreground: oklch(0.18 0.01 265);
+  /* 主色调：更深沉的蓝 */
+  --primary: oklch(0.48 0.12 250);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.96 0.002 265);
-  --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.96 0.002 265);
-  --muted-foreground: oklch(0.5 0.02 265);
-  --accent: oklch(0.96 0.002 265);
-  --accent-foreground: oklch(0.21 0.006 285.885);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.9 0.005 265);
-  --input: oklch(0.9 0.005 265);
-  --ring: oklch(0.55 0.12 250);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.141 0.005 285.823);
-  --sidebar-primary: oklch(0.21 0.006 285.885);
+  --secondary: oklch(0.955 0.003 250);
+  --secondary-foreground: oklch(0.25 0.01 265);
+  --muted: oklch(0.955 0.003 250);
+  --muted-foreground: oklch(0.5 0.015 250);
+  --accent: oklch(0.955 0.003 250);
+  --accent-foreground: oklch(0.25 0.01 265);
+  --destructive: oklch(0.55 0.2 25);
+  --border: oklch(0.91 0.004 250);
+  --input: oklch(0.91 0.004 250);
+  --ring: oklch(0.55 0.1 250);
+  /* 图表色：降低饱和度 */
+  --chart-1: oklch(0.62 0.15 45);
+  --chart-2: oklch(0.58 0.1 180);
+  --chart-3: oklch(0.45 0.06 230);
+  --chart-4: oklch(0.75 0.12 85);
+  --chart-5: oklch(0.7 0.12 70);
+  --sidebar: oklch(0.99 0.002 250);
+  --sidebar-foreground: oklch(0.18 0.01 265);
+  --sidebar-primary: oklch(0.25 0.01 265);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.967 0.001 286.375);
-  --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
-  --sidebar-border: oklch(0.92 0.004 286.32);
-  --sidebar-ring: oklch(0.705 0.015 286.067);
+  --sidebar-accent: oklch(0.96 0.003 250);
+  --sidebar-accent-foreground: oklch(0.25 0.01 265);
+  --sidebar-border: oklch(0.92 0.003 250);
+  --sidebar-ring: oklch(0.7 0.01 250);
 }
 
 .dark {
@@ -124,6 +126,33 @@
   body {
     @apply bg-background text-foreground;
   }
+  
+  /* 禁止应用级别的文本选择，让它更像原生应用 */
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  
+  /* 只允许编辑区域和特定输入区域选择文本 */
+  .zentri-editor-content,
+  .zentri-editor-content *,
+  input,
+  textarea,
+  [contenteditable="true"],
+  [contenteditable="true"] *,
+  .selectable,
+  .selectable *,
+  pre,
+  code {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  
+  /* 禁止拖拽图片等元素 */
+  img:not(.draggable) {
+    -webkit-user-drag: none;
+    user-drag: none;
+  }
 }
 
 /* 建议5: 数字使用等宽字体提升精密感和"数据感" */
@@ -144,21 +173,35 @@
 /* 建议1: 卡片阴影样式 - 更精致的弥散阴影让卡片"浮"起来 */
 .card-elevated {
   box-shadow: 
-    0 1px 2px rgba(0, 0, 0, 0.03),
-    0 2px 4px rgba(0, 0, 0, 0.03),
-    0 4px 8px rgba(0, 0, 0, 0.03),
-    0 8px 16px rgba(0, 0, 0, 0.02);
-  transition: box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1), 
-              transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 2px 4px rgba(0, 0, 0, 0.04),
+    0 4px 12px rgba(0, 0, 0, 0.05),
+    0 8px 24px rgba(0, 0, 0, 0.04);
+  transition: box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+              transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .card-elevated:hover {
   box-shadow: 
-    0 2px 4px rgba(0, 0, 0, 0.04),
-    0 4px 8px rgba(0, 0, 0, 0.04),
-    0 8px 16px rgba(0, 0, 0, 0.04),
-    0 16px 32px rgba(0, 0, 0, 0.03);
-  transform: translateY(-2px);
+    0 2px 4px rgba(0, 0, 0, 0.05),
+    0 4px 8px rgba(0, 0, 0, 0.05),
+    0 12px 24px rgba(0, 0, 0, 0.06),
+    0 24px 48px rgba(0, 0, 0, 0.04);
+  transform: translateY(-3px);
+}
+
+/* 全局卡片基础阴影 - 让所有卡片都有"浮起"效果 */
+[data-slot="card"] {
+  box-shadow: 
+    0 1px 3px rgba(0, 0, 0, 0.04),
+    0 4px 12px rgba(0, 0, 0, 0.05);
+  transition: box-shadow 0.25s ease, transform 0.25s ease;
+}
+
+[data-slot="card"]:hover {
+  box-shadow: 
+    0 4px 8px rgba(0, 0, 0, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.06);
 }
 
 /* 建议3: 选中态竖线样式 */
@@ -177,7 +220,7 @@
   border-radius: 0 2px 2px 0;
 }
 
-/* 建议2: 盒子顶部色条 */
+/* 盒子顶部色条 - 更沉稳的渐变 */
 .box-stripe {
   position: relative;
   overflow: hidden;
@@ -189,23 +232,23 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 4px;
+  height: 3px;
 }
 
 .box-stripe-amber::before {
-  background: linear-gradient(90deg, #f59e0b, #fbbf24);
+  background: linear-gradient(90deg, #b45309, #d97706);
 }
 
 .box-stripe-sky::before {
-  background: linear-gradient(90deg, #0ea5e9, #38bdf8);
+  background: linear-gradient(90deg, #0369a1, #0284c7);
 }
 
 .box-stripe-emerald::before {
-  background: linear-gradient(90deg, #10b981, #34d399);
+  background: linear-gradient(90deg, #047857, #059669);
 }
 
 .box-stripe-violet::before {
-  background: linear-gradient(90deg, #8b5cf6, #a78bfa);
+  background: linear-gradient(90deg, #6d28d9, #7c3aed);
 }
 
 /* 建议2: 链接流动可视化 - 点阵图 */
@@ -277,17 +320,17 @@
   }
 }
 
-/* 建议2: 知识流动桑基图风格 - 更精致的流动效果 */
+/* 知识流动桑基图风格 - hover时触发流动效果 */
 .sankey-flow {
   position: relative;
-  height: 8px;
+  height: 6px;
   background: linear-gradient(90deg, 
     transparent 0%, 
-    var(--flow-color, hsl(var(--primary))) 15%,
-    var(--flow-color, hsl(var(--primary))) 85%,
+    var(--flow-color, hsl(var(--primary))) 10%,
+    var(--flow-color, hsl(var(--primary))) 90%,
     transparent 100%
   );
-  border-radius: 4px;
+  border-radius: 3px;
   overflow: hidden;
 }
 
@@ -297,26 +340,26 @@
   inset: 0;
   background: linear-gradient(90deg, 
     rgba(255,255,255,0) 0%,
-    rgba(255,255,255,0.6) 50%,
+    rgba(255,255,255,0.4) 50%,
     rgba(255,255,255,0) 100%
   );
-  animation: sankey-shine 2.5s ease-in-out infinite;
+  transform: translateX(-100%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+/* 只在 hover 时触发动画 */
+.sankey-flow:hover::after {
+  animation: sankey-shine 3s ease-in-out infinite;
+  opacity: 1;
 }
 
 @keyframes sankey-shine {
   0% {
     transform: translateX(-100%);
-    opacity: 0;
-  }
-  20% {
-    opacity: 1;
-  }
-  80% {
-    opacity: 1;
   }
   100% {
-    transform: translateX(100%);
-    opacity: 0;
+    transform: translateX(200%);
   }
 }
 
@@ -367,4 +410,194 @@
   box-shadow: 
     0 0 0 1px oklch(0.7 0.1 250 / 0.2),
     0 4px 12px oklch(0.5 0.15 250 / 0.1);
+}
+
+/* 建议2: 腐烂机制 - 微妙脉动警告 */
+@keyframes pulse-subtle {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 3s ease-in-out infinite;
+}
+
+/* 建议5: 保存状态呼吸灯 */
+@keyframes breathe {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-breathe {
+  animation: breathe 2s ease-in-out infinite;
+}
+
+/* 保存成功闪烁 */
+@keyframes save-flash {
+  0% {
+    opacity: 0.5;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+  100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+}
+
+.animate-save-flash {
+  animation: save-flash 0.3s ease-out;
+}
+
+/* ==================== 建议5: 三段式流水线布局样式 ==================== */
+
+/* 桑基图流动光效 */
+@keyframes sankey-shine {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(200%);
+    opacity: 0;
+  }
+}
+
+/* 微妙的脉冲动画 - 用于待处理警告 */
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+@keyframes pulse-subtle {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+/* 三段式布局的渐变连接线 */
+.pipeline-connector {
+  position: relative;
+}
+
+.pipeline-connector::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: -20px;
+  width: 40px;
+  height: 2px;
+  background: linear-gradient(90deg, 
+    var(--from-color, hsl(45 100% 60%)) 0%, 
+    var(--to-color, hsl(142 70% 50%)) 100%);
+  opacity: 0.4;
+  transform: translateY(-50%);
+}
+
+/* 输入区连接器 */
+.pipeline-input::after {
+  --from-color: hsl(45 100% 60%);
+  --to-color: hsl(142 70% 50%);
+}
+
+/* 核心区连接器 */
+.pipeline-core::after {
+  --from-color: hsl(142 70% 50%);
+  --to-color: hsl(262 80% 60%);
+}
+
+/* 聚焦模式切换的过渡效果 */
+.focus-mode-transition {
+  transition: opacity 0.3s ease, transform 0.3s ease, filter 0.3s ease;
+}
+
+.focus-mode-dimmed {
+  opacity: 0.6;
+  filter: grayscale(20%);
+}
+
+/* 流动箭头动画 */
+@keyframes flow-arrow {
+  0% {
+    transform: translateX(0);
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(4px);
+    opacity: 0.3;
+  }
+}
+
+.animate-flow-arrow {
+  animation: flow-arrow 1.5s ease-in-out infinite;
+}
+
+/* 知识节点生长动画 */
+@keyframes node-grow {
+  0% {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-node-grow {
+  animation: node-grow 0.4s ease-out;
+}
+
+/* 首页流动光效动画 - 更慢更柔和 */
+@keyframes flow-slow {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(200%);
+  }
+}
+
+.animate-flow-slow {
+  animation: flow-slow 3s ease-in-out infinite;
+}
+
+/* 首页卡片入场动画 */
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-card-enter {
+  animation: card-enter 0.3s ease-out;
 }

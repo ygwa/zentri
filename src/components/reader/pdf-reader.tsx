@@ -10,8 +10,10 @@ import {
   Highlighter,
   Plus,
   RotateCw,
+  GripVertical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getFileUrl } from "@/lib/file-url";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 // 设置 worker
@@ -19,7 +21,10 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.j
 
 interface PdfReaderProps {
   url: string;
+  sourceId?: string;
+  sourceTitle?: string;
   onHighlight?: (text: string, page: number) => void;
+  onAddToNote?: (text: string, page: number) => void;
   onProgress?: (progress: number) => void;
   className?: string;
 }
@@ -32,7 +37,10 @@ interface TextSelection {
 
 export function PdfReader({
   url,
+  sourceId,
+  sourceTitle,
   onHighlight,
+  onAddToNote,
   onProgress,
   className,
 }: PdfReaderProps) {
@@ -59,7 +67,11 @@ export function PdfReader({
         setIsLoading(true);
         setError(null);
 
-        const loadingTask = pdfjsLib.getDocument(url);
+        // 转换本地文件路径为可访问的 URL
+        const fileUrl = await getFileUrl(url);
+        console.log("Loading PDF from:", fileUrl);
+
+        const loadingTask = pdfjsLib.getDocument(fileUrl);
         const pdfDoc = await loadingTask.promise;
         
         setPdf(pdfDoc);
@@ -369,32 +381,75 @@ export function PdfReader({
         </div>
       </ScrollArea>
 
-      {/* 选中文本工具栏 */}
-      {selectedText && (
-        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-popover border rounded-lg shadow-lg p-2 flex items-center gap-2 z-50">
-          <span className="text-xs text-muted-foreground max-w-[200px] truncate">
-            "{selectedText.text}"
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs gap-1"
-            onClick={highlightSelected}
+      {/* 选中文本工具栏 - 跟随选中位置 */}
+      {selectedText && (() => {
+        // 计算弹出框位置 - 基于选中区域
+        const containerRect = containerRef.current?.getBoundingClientRect();
+        let popupStyle: React.CSSProperties = {
+          bottom: '64px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+        };
+        
+        if (selectedText.rects.length > 0 && containerRect) {
+          const firstRect = selectedText.rects[0];
+          const relativeX = firstRect.left - containerRect.left + firstRect.width / 2;
+          const relativeY = firstRect.top - containerRect.top;
+          popupStyle = {
+            left: `${Math.max(120, Math.min(relativeX, containerRect.width - 120))}px`,
+            top: `${Math.max(50, relativeY - 50)}px`,
+            transform: 'translateX(-50%)',
+          };
+        }
+        
+        return (
+          <div 
+            className="absolute bg-popover border rounded-lg shadow-lg p-2 flex items-center gap-2 z-50"
+            style={popupStyle}
           >
-            <Highlighter className="h-3 w-3 text-yellow-500" />
-            高亮
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs gap-1"
-            onClick={highlightSelected}
-          >
-            <Plus className="h-3 w-3" />
-            添加到笔记
-          </Button>
-        </div>
-      )}
+            <div 
+              className="cursor-grab hover:bg-muted p-1 rounded active:cursor-grabbing"
+              draggable
+              onDragStart={(e) => {
+                if (sourceId) {
+                  e.dataTransfer.setData("application/x-zentri-reference", JSON.stringify({
+                    sourceId,
+                    sourceTitle: sourceTitle || "PDF",
+                    text: selectedText.text,
+                    page: selectedText.page,
+                    type: "pdf",
+                  }));
+                  e.dataTransfer.effectAllowed = "copy";
+                }
+              }}
+              title="拖拽到编辑器以创建引用"
+            >
+              <GripVertical className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs gap-1"
+              onClick={highlightSelected}
+            >
+              <Highlighter className="h-3 w-3 text-yellow-500" />
+              高亮
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs gap-1"
+              onClick={() => {
+                highlightSelected();
+                onAddToNote?.(selectedText.text, selectedText.page);
+              }}
+            >
+              <Plus className="h-3 w-3" />
+              笔记
+            </Button>
+          </div>
+        );
+      })()}
 
       {/* 进度条 */}
       <div className="h-1 bg-muted">

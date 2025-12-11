@@ -1,0 +1,112 @@
+/**
+ * 文件选择工具
+ * 封装 Tauri 的文件对话框 API
+ */
+
+import { isTauriEnv } from "@/services/api";
+
+export interface FilePickerOptions {
+  /** 对话框标题 */
+  title?: string;
+  /** 允许的文件扩展名 */
+  extensions?: string[];
+  /** 是否允许多选 */
+  multiple?: boolean;
+}
+
+export interface FilePickerResult {
+  /** 文件路径 */
+  path: string;
+  /** 文件名 */
+  name: string;
+}
+
+/**
+ * 打开文件选择对话框
+ * @returns 选中的文件路径，取消则返回 null
+ */
+export async function pickFile(
+  options: FilePickerOptions = {}
+): Promise<FilePickerResult | null> {
+  const { title = "选择文件", extensions, multiple = false } = options;
+
+  if (!isTauriEnv()) {
+    // 非 Tauri 环境使用浏览器的 file input
+    return new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.multiple = multiple;
+      
+      if (extensions && extensions.length > 0) {
+        input.accept = extensions.map((ext) => `.${ext}`).join(",");
+      }
+
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (file) {
+          // 在浏览器环境中，我们可以创建一个 blob URL
+          const url = URL.createObjectURL(file);
+          resolve({
+            path: url,
+            name: file.name,
+          });
+        } else {
+          resolve(null);
+        }
+      };
+
+      input.oncancel = () => resolve(null);
+      input.click();
+    });
+  }
+
+  try {
+    // 动态导入 Tauri dialog
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    
+    const filters = extensions && extensions.length > 0
+      ? [{ name: "支持的文件", extensions }]
+      : undefined;
+
+    const selected = await open({
+      multiple: false,
+      title,
+      filters,
+    });
+
+    if (selected && typeof selected === "string") {
+      // 从路径中提取文件名
+      const name = selected.split(/[/\\]/).pop() || selected;
+      return {
+        path: selected,
+        name,
+      };
+    }
+
+    return null;
+  } catch (err) {
+    console.error("Failed to open file dialog:", err);
+    return null;
+  }
+}
+
+/**
+ * 选择 EPUB 或 PDF 文件
+ */
+export async function pickReadableFile(): Promise<FilePickerResult | null> {
+  return pickFile({
+    title: "选择文档文件",
+    extensions: ["epub", "pdf"],
+  });
+}
+
+/**
+ * 选择图片文件
+ */
+export async function pickImageFile(): Promise<FilePickerResult | null> {
+  return pickFile({
+    title: "选择图片",
+    extensions: ["png", "jpg", "jpeg", "gif", "webp"],
+  });
+}
+
