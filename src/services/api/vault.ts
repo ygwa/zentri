@@ -11,10 +11,25 @@ export async function getPath(): Promise<string | null> {
 }
 
 /**
- * 设置 Vault 路径
+ * 设置初始 Vault 路径（首次启动时）
+ */
+export async function setInitialPath(path: string): Promise<void> {
+  await invoke("set_initial_vault_path", { path });
+}
+
+/**
+ * 设置 Vault 路径（切换时使用）
  */
 export async function setPath(path: string): Promise<void> {
-  await invoke("set_vault_path", { path });
+  // 对于切换操作，使用相同的后端命令
+  await invoke("set_initial_vault_path", { path });
+}
+
+/**
+ * 获取 Vault 历史记录列表
+ */
+export async function getHistory(): Promise<string[]> {
+  return await invoke<string[]>("get_vault_history");
 }
 
 /**

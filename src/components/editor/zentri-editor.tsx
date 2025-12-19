@@ -92,20 +92,28 @@ export function ZentriEditor({
   // Bubble 工具栏状态
   const [showBubble, setShowBubble] = useState(false);
   const [bubblePosition, setBubblePosition] = useState({ x: 0, y: 0 });
+  const bubbleUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastBubblePositionRef = useRef({ x: 0, y: 0 });
+  const isSelectingRef = useRef(false);
 
   // [[ 链接自动补全状态
   const [isLinkMenuOpen, setIsLinkMenuOpen] = useState(false);
   const [linkMenuPosition, setLinkMenuPosition] = useState({ x: 0, y: 0 });
   const [linkQuery, setLinkQuery] = useState("");
   const linkRangeRef = useRef<{ from: number; to: number } | null>(null);
-  
+
   // 用于防抖链接提取的 ref
   const linksExtractTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastLinksRef = useRef<string[]>([]);
-  
+
   // 用于防抖 onChange 的 ref
   const onChangeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastContentRef = useRef<string>('');
+
+  const onLinkClickRef = useRef(onLinkClick);
+  useEffect(() => {
+    onLinkClickRef.current = onLinkClick;
+  }, [onLinkClick]);
 
   const editor = useEditor({
     extensions: [
@@ -172,12 +180,12 @@ export function ZentriEditor({
       // 自定义 [[WikiLink]] 扩展
       WikiLink.configure({
         cards,
-        onLinkClick,
+        onLinkClick: (id) => onLinkClickRef.current?.(id),
       }),
       ReferenceBlock.configure({
         onLocate: (sourceId, location) => {
           console.log("Locate request:", sourceId, location);
-          // TODO: Implement navigation to source
+          onLinkClickRef.current?.(sourceId);
         },
       }),
     ],
@@ -207,44 +215,44 @@ export function ZentriEditor({
         if (!clipboardData) {
           return false;
         }
-        
+
         const text = clipboardData.getData("text/plain");
         const html = clipboardData.getData("text/html");
-        
+
         // 如果没有纯文本，或者已经有 HTML 内容（从富文本编辑器复制），使用默认处理
         if (!text || (html && html.length > 50)) {
           return false;
         }
-        
+
         // 检测是否像 Markdown
         if (looksLikeMarkdown(text)) {
           event.preventDefault();
-          
+
           // 转换 Markdown 为 HTML
           const convertedHtml = markdownToHtml(text);
-          
+
           // 使用 ProseMirror 的 DOM 解析器插入 HTML
           const { state, dispatch } = view;
           const { schema } = state;
-          
+
           // 创建一个临时 DOM 元素来解析 HTML
           const tempDiv = document.createElement("div");
           tempDiv.innerHTML = convertedHtml;
-          
+
           // 使用 ProseMirror 的 DOMParser 解析
           const parser = DOMParser.fromSchema(schema);
           const doc = parser.parse(tempDiv);
-          
+
           // 获取内容片段
           const fragment = doc.content;
-          
+
           // 插入内容
           const tr = state.tr.replaceSelection(new Slice(fragment, 0, 0));
           dispatch(tr);
-          
+
           return true;
         }
-        
+
         return false;
       },
       handleDrop: (view, event, _slice, moved) => {
@@ -278,7 +286,7 @@ export function ZentriEditor({
     onUpdate: ({ editor }) => {
       // 检测各种命令触发
       detectCommands(editor);
-      
+
       // 防抖 onChange，避免每次按键都触发更新（300ms 防抖）
       if (onChange) {
         if (onChangeTimeoutRef.current) {
@@ -287,7 +295,7 @@ export function ZentriEditor({
         onChangeTimeoutRef.current = setTimeout(() => {
           const jsonContent = editor.getJSON();
           const contentStr = JSON.stringify(jsonContent);
-          
+
           // 只在内容实际变化时才调用 onChange
           if (contentStr !== lastContentRef.current) {
             lastContentRef.current = contentStr;
@@ -295,7 +303,7 @@ export function ZentriEditor({
           }
         }, 300); // 300ms 防抖，平衡响应性和性能
       }
-      
+
       // 防抖提取 [[双链]]，避免每次按键都执行
       if (onLinksChange) {
         if (linksExtractTimeoutRef.current) {
@@ -305,12 +313,12 @@ export function ZentriEditor({
           const text = editor.getText();
           const linkTitles = extractWikiLinkTitles(text);
           const linkIds = resolveWikiLinksToIds(linkTitles, cards);
-          
+
           // 只在链接实际变化时才通知
           const lastLinks = lastLinksRef.current;
-          const changed = linkIds.length !== lastLinks.length || 
+          const changed = linkIds.length !== lastLinks.length ||
             !linkIds.every((id, i) => lastLinks[i] === id);
-          
+
           if (changed) {
             lastLinksRef.current = linkIds;
             onLinksChange(linkIds);
@@ -319,23 +327,21 @@ export function ZentriEditor({
       }
     },
     onSelectionUpdate: ({ editor }) => {
-      const { selection } = editor.state;
-      const { empty } = selection;
-
-      // 选中文字且不是代码块时显示 bubble
-      if (!empty && !editor.isActive("codeBlock")) {
-        const { from, to } = selection;
-        const start = editor.view.coordsAtPos(from);
-        const end = editor.view.coordsAtPos(to);
-
-        setBubblePosition({
-          x: (start.left + end.left) / 2,
-          y: start.top - 10,
-        });
-        setShowBubble(true);
-      } else {
+      // 如果正在选中过程中，不显示 toolbar
+      if (isSelectingRef.current) {
         setShowBubble(false);
+        return;
       }
+
+      // 清除之前的防抖定时器
+      if (bubbleUpdateTimeoutRef.current) {
+        clearTimeout(bubbleUpdateTimeoutRef.current);
+      }
+
+      // 防抖更新，避免频繁更新导致闪动
+      bubbleUpdateTimeoutRef.current = setTimeout(() => {
+        updateBubbleToolbar(editor);
+      }, 50); // 50ms 防抖，平衡响应性和性能
     },
   });
 
@@ -399,6 +405,109 @@ export function ZentriEditor({
     [isSlashMenuOpen, isLinkMenuOpen]
   );
 
+  // 更新 bubble toolbar 位置的函数
+  const updateBubbleToolbar = useCallback((editor: Editor) => {
+    const { selection } = editor.state;
+    const { empty } = selection;
+
+    // 检查是否选中了 wiki link 节点
+    const { $from, $to } = selection;
+    let isWikiLink = false;
+    
+    // 检查选择范围内是否有 wiki link 节点
+    editor.state.doc.nodesBetween($from.pos, $to.pos, (node) => {
+      if (node.type.name === 'wikiLink') {
+        isWikiLink = true;
+        return false; // 停止遍历
+      }
+    });
+    
+    // 如果选中了 wiki link，不显示 bubble toolbar
+    if (isWikiLink) {
+      setShowBubble(false);
+      return;
+    }
+
+    // 选中文字且不是代码块时显示 bubble
+    if (!empty && !editor.isActive("codeBlock")) {
+      const { from, to } = selection;
+      const start = editor.view.coordsAtPos(from);
+      const end = editor.view.coordsAtPos(to);
+
+      // 计算位置，考虑边界情况
+      const editorElement = editor.view.dom.closest('.zentri-editor');
+      const editorRect = editorElement?.getBoundingClientRect();
+      const toolbarWidth = 400; // 估算工具栏宽度
+      const toolbarHeight = 50; // 估算工具栏高度
+      const verticalOffset = 12; // 工具栏与选中文字之间的间距
+      
+      let x = (start.left + end.left) / 2;
+      // Y 位置：显示在选中文字上方，有足够的间距
+      let y = start.top - verticalOffset;
+
+      // 调整 X 位置，避免超出边界
+      if (editorRect) {
+        const minX = editorRect.left + toolbarWidth / 2 + 10;
+        const maxX = editorRect.right - toolbarWidth / 2 - 10;
+        x = Math.max(minX, Math.min(maxX, x));
+      }
+
+      // 调整 Y 位置，如果上方空间不足，显示在下方
+      if (editorRect) {
+        const spaceAbove = start.top - editorRect.top;
+        if (spaceAbove < toolbarHeight + verticalOffset + 10) {
+          // 上方空间不足，显示在选中文字下方
+          y = end.bottom + verticalOffset;
+        } else {
+          // 上方空间足够，显示在上方
+          y = start.top - verticalOffset;
+        }
+      }
+
+      // 只在位置真正变化时才更新，避免不必要的重渲染
+      const newPosition = { x, y };
+      const positionChanged = 
+        Math.abs(newPosition.x - lastBubblePositionRef.current.x) > 5 ||
+        Math.abs(newPosition.y - lastBubblePositionRef.current.y) > 5;
+
+      if (positionChanged) {
+        lastBubblePositionRef.current = newPosition;
+        setBubblePosition(newPosition);
+      }
+
+      setShowBubble(true);
+    } else {
+      setShowBubble(false);
+    }
+  }, []);
+
+  // 监听鼠标事件，只在松开时显示 toolbar
+  useEffect(() => {
+    if (!editor) return;
+
+    const handleMouseDown = () => {
+      isSelectingRef.current = true;
+      setShowBubble(false);
+    };
+
+    const handleMouseUp = () => {
+      isSelectingRef.current = false;
+      // 鼠标松开后，检查是否有选中内容并显示 toolbar
+      setTimeout(() => {
+        updateBubbleToolbar(editor);
+      }, 10);
+    };
+
+    const editorElement = editor.view.dom;
+    editorElement.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      editorElement.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [editor, updateBubbleToolbar]);
+
   // 当编辑器就绪时，通知外部组件
   useEffect(() => {
     if (editor && onEditorReady) {
@@ -413,13 +522,27 @@ export function ZentriEditor({
 
   // 同步外部 content 变化
   useEffect(() => {
-    // 只有当编辑器没有焦点时，才允许外部更新覆盖
-    // 这样可以避免输入时的光标跳动和冲突
-    if (editor && content && !editor.isFocused) {
+    // 只有当编辑器没有焦点或者内容为空时，才允许外部更新覆盖
+    // 这样可以避免输入时的光标跳动和冲突，但又能确保初始加载（即使已聚焦）能成功
+    if (editor && content) {
       const currentJson = JSON.stringify(editor.getJSON());
       const newJson = JSON.stringify(content);
+
       if (currentJson !== newJson) {
-        editor.commands.setContent(content);
+        // 检查编辑器是否为空（仅有一个空段落）
+        const isEmpty = editor.isEmpty;
+
+        if (!editor.isFocused || isEmpty) {
+          // 保存当前选区位置
+          const { from } = editor.state.selection;
+
+          editor.commands.setContent(content);
+
+          // 如果之前是聚焦的且为空（初始加载场景），尝试恢复光标位置或移动到末尾
+          if (editor.isFocused) {
+            editor.commands.setTextSelection(Math.min(from, editor.state.doc.content.size));
+          }
+        }
       }
     }
   }, [content, editor]);
@@ -432,6 +555,9 @@ export function ZentriEditor({
       }
       if (onChangeTimeoutRef.current) {
         clearTimeout(onChangeTimeoutRef.current);
+      }
+      if (bubbleUpdateTimeoutRef.current) {
+        clearTimeout(bubbleUpdateTimeoutRef.current);
       }
     };
   }, []);
@@ -458,29 +584,23 @@ export function ZentriEditor({
       }
 
       if (selectedCard) {
-        // 删除 [[query 并插入链接
-        // 先删除 [[query
+        // 删除 [[query 并直接插入 wiki link 节点
+        const { state, dispatch } = editor.view;
+        const card = cards.find(c => c.id === selectedCard.id || c.title === selectedCard.title);
+        const exists = !!card;
+        
+        const wikiLinkNode = editor.schema.nodes.wikiLink.create({
+          title: selectedCard.title,
+          href: selectedCard.id || selectedCard.title,
+          exists
+        });
+        
         editor
           .chain()
           .focus()
           .deleteRange({ from, to })
+          .insertContent(wikiLinkNode)
           .run();
-        
-        // 插入 [[title]] 文本
-        const text = `[[${selectedCard.title}]]`;
-        const insertPos = editor.state.selection.$from.pos;
-        editor.chain().insertContent(text).run();
-        
-        // 应用 wikiLink mark（如果卡片存在）
-        if (selectedCard.id) {
-          const endPos = insertPos + text.length;
-          editor
-            .chain()
-            .setTextSelection({ from: insertPos, to: endPos })
-            .setWikiLink({ href: selectedCard.id, title: selectedCard.title })
-            .setTextSelection(endPos)
-            .run();
-        }
       }
 
       setIsLinkMenuOpen(false);
@@ -576,10 +696,10 @@ export function ZentriEditor({
       {/* Bubble 工具栏 - 选中文字时显示 */}
       {showBubble && !isSlashMenuOpen && !isLinkMenuOpen && (
         <div
-          className="fixed z-50 animate-in fade-in-0 zoom-in-95 duration-150"
+          className="fixed z-50 animate-in fade-in-0 zoom-in-95 duration-150 pointer-events-auto"
           style={{
-            left: bubblePosition.x,
-            top: bubblePosition.y,
+            left: `${bubblePosition.x}px`,
+            top: `${bubblePosition.y}px`,
             transform: "translate(-50%, -100%)",
           }}
         >

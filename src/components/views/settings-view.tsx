@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Settings, Monitor, Edit3, GitGraph, UploadCloud, Download, Import } from "lucide-react";
+import { Settings, Monitor, Edit3, GitGraph, UploadCloud, Download, Import, FolderOpen } from "lucide-react";
+import { useAppStore } from "@/store";
 
 export function SettingsView() {
     const tabs = [
@@ -10,6 +11,28 @@ export function SettingsView() {
     ];
     
     const [activeTab, setActiveTab] = useState('general');
+    const [isVaultSwitcherOpen, setIsVaultSwitcherOpen] = useState(false);
+    const { vaultPath } = useAppStore();
+
+    /**
+     * 格式化路径显示（缩短长路径）
+     */
+    const formatPath = (path: string | null): string => {
+        if (!path) return "未设置";
+        
+        // 处理 ~ 开头的路径
+        if (path.startsWith("~")) {
+            return path;
+        }
+        
+        // 如果路径太长，只显示最后一部分
+        const parts = path.split(/[/\\]/);
+        if (parts.length > 3) {
+            return "..." + parts.slice(-3).join("/");
+        }
+        
+        return path;
+    };
 
     return (
         <div className="flex-1 flex flex-col h-full bg-white animate-in fade-in duration-200">
@@ -46,6 +69,34 @@ export function SettingsView() {
                 <div className="flex-1 overflow-y-auto p-8 max-w-3xl">
                     {activeTab === 'general' && (
                         <div className="space-y-8">
+                            <section>
+                                <h3 className="text-sm font-bold text-zinc-900 border-b border-zinc-200 pb-2 mb-4">
+                                    Vault Management
+                                </h3>
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex-1">
+                                            <div className="text-xs font-medium text-zinc-800 mb-1">Current Vault</div>
+                                            <div className="text-[10px] text-zinc-500 font-mono">
+                                                {vaultPath ? formatPath(vaultPath) : "未设置"}
+                                            </div>
+                                        </div>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => setIsVaultSwitcherOpen(true)}
+                                            className="flex items-center gap-2"
+                                        >
+                                            <FolderOpen size={14} />
+                                            Switch Vault
+                                        </Button>
+                                    </div>
+                                    <p className="text-[10px] text-zinc-500">
+                                        切换笔记库将重新加载所有数据。请确保已保存当前工作。
+                                    </p>
+                                </div>
+                            </section>
+
                             <section>
                                 <h3 className="text-sm font-bold text-zinc-900 border-b border-zinc-200 pb-2 mb-4">
                                     Appearance
@@ -200,6 +251,12 @@ export function SettingsView() {
                     )}
                 </div>
             </div>
+
+            {/* Vault Switcher Dialog */}
+            <VaultSwitcherDialog
+                open={isVaultSwitcherOpen}
+                onOpenChange={setIsVaultSwitcherOpen}
+            />
         </div>
     );
 }

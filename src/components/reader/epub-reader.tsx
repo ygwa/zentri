@@ -14,6 +14,8 @@ import {
 import { cn } from "@/lib/utils";
 import { getFileUrl } from "@/lib/file-url";
 import type { Highlight } from "@/types";
+import { HighlightColorPicker, HIGHLIGHT_COLORS } from "./highlight-color-picker";
+import { FontSelector, FONT_OPTIONS } from "./font-selector";
 
 interface EpubReaderProps {
   url: string;
@@ -23,6 +25,8 @@ interface EpubReaderProps {
   onHighlight?: (text: string, cfiRange: string) => void;
   onAddToNote?: (text: string, cfiRange: string) => void;
   onProgress?: (progress: number) => void;
+  onColorChange?: (color: string) => void;
+  onPageChange?: (page: number, totalPages: number) => void; // EPUB 使用进度作为页码
   className?: string;
 }
 
@@ -34,6 +38,8 @@ export function EpubReader({
   onHighlight,
   onAddToNote,
   onProgress,
+  onColorChange,
+  onPageChange,
   className,
 }: EpubReaderProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -46,6 +52,7 @@ export function EpubReader({
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [fontSize, setFontSize] = useState(100);
+  const [fontFamily, setFontFamily] = useState<string>(FONT_OPTIONS[0].fontFamily);
   const [selectedText, setSelectedText] = useState<{ 
     text: string; 
     cfiRange: string;
@@ -53,6 +60,10 @@ export function EpubReader({
   } | null>(null);
   const [showToc, setShowToc] = useState(false);
   const [toc, setToc] = useState<{ label: string; href: string }[]>([]);
+  const [selectedHighlightColor, setSelectedHighlightColor] = useState<string>(
+    HIGHLIGHT_COLORS[0].color
+  );
+  const progressUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // 稳定的回调引用
   const onProgressRef = useRef(onProgress);
@@ -166,10 +177,10 @@ export function EpubReader({
           });
         });
 
-        // 设置主题样式
+        // 设置主题样式（初始字体）
         rendition.themes.default({
           body: {
-            "font-family": "system-ui, -apple-system, sans-serif",
+            "font-family": fontFamily,
             "line-height": "1.8",
             "padding": "20px 40px",
             "background": "#fff",
@@ -180,11 +191,27 @@ export function EpubReader({
           },
         });
 
-        // 监听位置变化
+        // 监听位置变化（带防抖）
         rendition.on("relocated", (location: { start: { percentage: number } }) => {
           const percent = Math.round(location.start.percentage * 100);
           setProgress(percent);
-          onProgressRef.current?.(percent);
+          
+          // 立即更新进度（UI显示）
+          if (onProgressRef.current) {
+            onProgressRef.current(percent);
+          }
+          
+          // 通知页码变化（EPUB 使用进度作为页码）
+          if (onPageChange) {
+            // EPUB 没有明确的页码，使用百分比作为"页码"
+            onPageChange(percent, 100);
+          }
+        });
+        
+        // 初始显示后，手动触发一次进度更新
+        rendition.on("rendered", () => {
+          // 等待一帧确保位置已更新，relocated 事件会自动触发进度更新
+          // 这里不需要手动获取，因为 relocated 事件会在内容渲染后自动触发
         });
 
         // 监听文本选择
@@ -265,6 +292,9 @@ export function EpubReader({
       }
       currentUrlRef.current = null;
       initializingRef.current = false;
+      if (progressUpdateTimeoutRef.current) {
+        clearTimeout(progressUpdateTimeoutRef.current);
+      }
     };
   }, [url]); // 只依赖 url，使用 ref 来访问回调
 
@@ -298,14 +328,31 @@ export function EpubReader({
     };
   }, [isLoading]); // 在加载完成后开始监听
 
-  // 应用高亮
+  // 应用高亮 - 使用 CFI 定位
   useEffect(() => {
     if (!renditionRef.current || highlights.length === 0) return;
 
+    // 清除现有高亮（避免重复）
+    // epub.js 没有直接的 clearAnnotations，需要重新添加
+
     highlights.forEach((h) => {
-      if (h.position?.startOffset !== undefined) {
-        // 这里需要 CFI 位置信息
-        // renditionRef.current?.annotations.highlight(cfi, {}, () => {}, 'hl', { fill: h.color || 'yellow' });
+      // 优先使用 CFI 定位
+      const cfi = h.position?.cfi || h.position?.startOffset;
+      if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi')) {
+        try {
+          renditionRef.current?.annotations.highlight(
+            cfi,
+            { id: h.id },
+            () => {},
+            'hl',
+            { 
+              fill: h.color || 'rgba(255, 235, 59, 0.4)',
+              'fill-opacity': '0.4',
+            }
+          );
+        } catch (err) {
+          console.warn('Failed to apply highlight:', err);
+        }
       }
     });
   }, [highlights]);
@@ -316,6 +363,47 @@ export function EpubReader({
       renditionRef.current.themes.fontSize(`${fontSize}%`);
     }
   }, [fontSize]);
+
+  // 更新字体
+  useEffect(() => {
+    if (renditionRef.current && containerRef.current) {
+      // 直接操作 iframe 内的样式（最可靠的方法）
+      const updateFont = () => {
+        const iframe = containerRef.current?.querySelector("iframe");
+        if (iframe && iframe.contentDocument) {
+          // 移除旧的字体样式
+          const oldStyle = iframe.contentDocument.querySelector("style[data-font-override]");
+          if (oldStyle) {
+            oldStyle.remove();
+          }
+          
+          // 添加新的字体样式
+          const style = iframe.contentDocument.createElement("style");
+          style.setAttribute("data-font-override", "true");
+          style.textContent = `
+            body, * {
+              font-family: ${fontFamily} !important;
+            }
+          `;
+          iframe.contentDocument.head.appendChild(style);
+        }
+      };
+      
+      // 立即尝试更新
+      updateFont();
+      
+      // 监听渲染事件，确保在内容渲染后更新字体
+      const handleRendered = () => {
+        updateFont();
+      };
+      
+      renditionRef.current.on("rendered", handleRendered);
+      
+      return () => {
+        renditionRef.current?.off("rendered", handleRendered);
+      };
+    }
+  }, [fontFamily]);
 
   // 翻页
   const goNext = useCallback(() => {
@@ -342,8 +430,27 @@ export function EpubReader({
   }, []);
 
   // 高亮选中文本
-  const highlightSelected = useCallback(() => {
+  const highlightSelected = useCallback((color?: string) => {
     if (!selectedText || !renditionRef.current) return;
+
+    const highlightColor = color || selectedHighlightColor;
+    
+    // 提取颜色值用于 epub.js（需要 RGB 格式）
+    const rgbMatch = highlightColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+    let fillColor = "yellow";
+    let fillOpacity = "0.3";
+    
+    if (rgbMatch) {
+      const r = parseInt(rgbMatch[1]);
+      const g = parseInt(rgbMatch[2]);
+      const b = parseInt(rgbMatch[3]);
+      fillColor = `rgb(${r}, ${g}, ${b})`;
+      // 从 rgba 中提取透明度
+      const opacityMatch = highlightColor.match(/[\d.]+\)$/);
+      if (opacityMatch) {
+        fillOpacity = opacityMatch[0].replace(')', '');
+      }
+    }
 
     // 添加高亮标注
     renditionRef.current.annotations.highlight(
@@ -351,13 +458,13 @@ export function EpubReader({
       {},
       () => {},
       "hl",
-      { fill: "yellow", "fill-opacity": "0.3" }
+      { fill: fillColor, "fill-opacity": fillOpacity }
     );
 
-    // 回调
+    // 回调（传递颜色信息）
     onHighlight?.(selectedText.text, selectedText.cfiRange);
     setSelectedText(null);
-  }, [selectedText, onHighlight]);
+  }, [selectedText, onHighlight, selectedHighlightColor]);
 
   // 键盘导航
   useEffect(() => {
@@ -396,6 +503,12 @@ export function EpubReader({
           >
             <List className="h-4 w-4" />
           </Button>
+          <FontSelector
+            selectedFont={fontFamily}
+            onFontSelect={(fontFamily) => {
+              setFontFamily(fontFamily);
+            }}
+          />
           <Button
             variant="ghost"
             size="icon"
@@ -444,38 +557,54 @@ export function EpubReader({
         )}
         <div ref={containerRef} className="h-full" />
         
-        {/* 翻页按钮 */}
+        {/* 半透明翻页按钮 - 不遮挡内容（参考微信读书） */}
         <button
           onClick={goPrev}
-          className="absolute left-2 top-1/2 -translate-y-1/2 w-10 h-20 flex items-center justify-center hover:bg-muted/50 rounded"
+          className="absolute left-4 top-1/2 -translate-y-1/2 z-40 w-12 h-20 flex items-center justify-center bg-black/20 hover:bg-black/40 backdrop-blur-sm rounded-lg transition-all opacity-0 hover:opacity-100 group"
+          aria-label="上一页"
         >
-          <ChevronLeft className="h-6 w-6 text-muted-foreground" />
+          <ChevronLeft className="h-6 w-6 text-white group-hover:scale-110 transition-transform" />
         </button>
         <button
           onClick={goNext}
-          className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-20 flex items-center justify-center hover:bg-muted/50 rounded"
+          className="absolute right-4 top-1/2 -translate-y-1/2 z-40 w-12 h-20 flex items-center justify-center bg-black/20 hover:bg-black/40 backdrop-blur-sm rounded-lg transition-all opacity-0 hover:opacity-100 group"
+          aria-label="下一页"
         >
-          <ChevronRight className="h-6 w-6 text-muted-foreground" />
+          <ChevronRight className="h-6 w-6 text-white group-hover:scale-110 transition-transform" />
         </button>
       </div>
 
-      {/* 选中文本工具栏 - 跟随选中位置 */}
+      {/* 选中文本工具栏 - 跟随选中位置（参考微信读书样式） */}
       {selectedText && (
         <div 
-          className="absolute bg-popover border rounded-lg shadow-lg p-2 flex items-center gap-2 z-50"
-          style={selectedText.position ? {
-            // 位置需要加上工具栏高度偏移（约 40px）
-            left: `${Math.max(100, Math.min(selectedText.position.x, (containerRef.current?.offsetWidth || 400) - 100))}px`,
-            top: `${Math.max(50, selectedText.position.y + 40)}px`, // +40px for toolbar
-            transform: 'translateX(-50%)',
-          } : {
+          className="absolute bg-popover border rounded-lg shadow-xl p-2.5 flex items-center gap-2 z-50 backdrop-blur-sm animate-in fade-in-0 zoom-in-95 duration-200"
+          style={selectedText.position ? (() => {
+            const containerWidth = containerRef.current?.offsetWidth || 400;
+            const popupHeight = 60;
+            const spaceAbove = selectedText.position.y;
+            
+            // 智能定位：优先显示在上方
+            if (spaceAbove > popupHeight + 20) {
+              return {
+                left: `${Math.max(150, Math.min(selectedText.position.x, containerWidth - 150))}px`,
+                top: `${Math.max(10, selectedText.position.y - popupHeight - 10)}px`,
+                transform: 'translateX(-50%)',
+              };
+            } else {
+              return {
+                left: `${Math.max(150, Math.min(selectedText.position.x, containerWidth - 150))}px`,
+                top: `${Math.min((containerRef.current?.offsetHeight || 600) - popupHeight - 10, selectedText.position.y + 40)}px`,
+                transform: 'translateX(-50%)',
+              };
+            }
+          })() : {
             bottom: '80px',
             left: '50%',
             transform: 'translateX(-50%)',
           }}
         >
           <div 
-            className="cursor-grab hover:bg-muted p-1 rounded active:cursor-grabbing"
+            className="cursor-grab hover:bg-muted p-1.5 rounded active:cursor-grabbing transition-colors"
             draggable
             onDragStart={(e) => {
               if (sourceId) {
@@ -493,25 +622,38 @@ export function EpubReader({
           >
             <GripVertical className="h-4 w-4 text-muted-foreground" />
           </div>
+          
+          {/* 颜色选择器 */}
+          <div className="px-1 border-l border-r border-border">
+            <HighlightColorPicker
+              selectedColor={selectedHighlightColor}
+              onColorSelect={(color) => {
+                setSelectedHighlightColor(color);
+                onColorChange?.(color); // 通知父组件颜色改变
+                highlightSelected(color);
+              }}
+            />
+          </div>
+          
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs gap-1"
-            onClick={highlightSelected}
+            className="h-8 text-xs gap-1.5 px-3"
+            onClick={() => highlightSelected()}
           >
-            <Highlighter className="h-3 w-3 text-yellow-500" />
+            <Highlighter className="h-3.5 w-3.5" style={{ color: selectedHighlightColor }} />
             高亮
           </Button>
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs gap-1"
+            className="h-8 text-xs gap-1.5 px-3"
             onClick={() => {
               highlightSelected();
               onAddToNote?.(selectedText.text, selectedText.cfiRange);
             }}
           >
-            <Plus className="h-3 w-3" />
+            <Plus className="h-3.5 w-3.5" />
             笔记
           </Button>
         </div>

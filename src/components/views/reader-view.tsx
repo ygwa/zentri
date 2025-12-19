@@ -4,9 +4,9 @@ import {
     ArrowRight, Download
 } from "lucide-react";
 import { useAppStore } from "@/store";
-import type { Source, Highlight } from "@/types";
+import type { Source, Highlight, WebSnapshot } from "@/types";
 import * as api from "@/services/api";
-import { UnifiedReader, detectFileType } from "@/components/reader";
+import { UnifiedReader, detectFileType, WebReader } from "@/components/reader";
 import { getFileUrl } from "@/lib/file-url";
 
 interface ReaderViewProps {
@@ -20,21 +20,62 @@ export function ReaderView({ source, onClose }: ReaderViewProps) {
     const [highlights, setHighlights] = useState<Highlight[]>([]);
     const [fileUrl, setFileUrl] = useState<string>('');
     const [fileType, setFileType] = useState<'epub' | 'pdf' | null>(null);
+    const [webSnapshot, setWebSnapshot] = useState<WebSnapshot | null>(null);
+    const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
     const [totalPages] = useState(320);
 
-    // 加载文件URL
+    // 加载文件URL或网页快照
     useEffect(() => {
-        const loadFileUrl = async () => {
-            if (source.url) {
-                const url = await getFileUrl(source.url);
-                setFileUrl(url);
-                const detected = detectFileType(source.url);
-                setFileType(detected);
+        const loadContent = async () => {
+            if (source.type === 'webpage' || source.type === 'article') {
+                // 网页类型：加载快照
+                setIsLoadingSnapshot(true);
+                try {
+                    if (source.url) {
+                        if (api.isTauriEnv()) {
+                            // Tauri 环境：从数据库加载或抓取
+                            let snapshot = await api.webReader.getSnapshot(source.id);
+                            
+                            // 如果没有快照，尝试抓取并保存
+                            if (!snapshot) {
+                                try {
+                                    const fetchResult = await api.webReader.fetchWebpage(source.url);
+                                    snapshot = await api.webReader.saveSnapshot(
+                                        source.id,
+                                        source.url,
+                                        fetchResult
+                                    );
+                                } catch (err) {
+                                    console.error("Failed to fetch webpage:", err);
+                                }
+                            }
+                            
+                            setWebSnapshot(snapshot);
+                        } else {
+                            // 浏览器环境：暂时显示提示
+                            console.warn("Web snapshot is only available in Tauri environment");
+                            setWebSnapshot(null);
+                        }
+                    }
+                } catch (err) {
+                    console.error("Failed to load web snapshot:", err);
+                    setWebSnapshot(null);
+                } finally {
+                    setIsLoadingSnapshot(false);
+                }
+            } else {
+                // 文件类型：加载文件URL
+                if (source.url) {
+                    const url = await getFileUrl(source.url);
+                    setFileUrl(url);
+                    const detected = detectFileType(source.url);
+                    setFileType(detected);
+                }
             }
         };
-        loadFileUrl();
-    }, [source.url]);
+        loadContent();
+    }, [source.url, source.type, source.id]);
 
     // 加载高亮
     useEffect(() => {
@@ -86,12 +127,17 @@ export function ReaderView({ source, onClose }: ReaderViewProps) {
     // 处理高亮
     const handleHighlight = async (text: string, position: string | number) => {
         try {
+            const positionData = typeof position === 'number'
+                ? { page: position }
+                : typeof position === 'string' && position.startsWith('text:')
+                ? { selector: position }
+                : { chapter: String(position) };
+            
             const highlight = await createHighlight({
                 sourceId: source.id,
                 content: text,
-                position: typeof position === 'number'
-                    ? { page: position }
-                    : { chapter: String(position) },
+                position: positionData,
+                color: 'rgba(255, 235, 59, 0.4)',
             });
             setHighlights(prev => [highlight, ...prev]);
         } catch (err) {
@@ -99,23 +145,64 @@ export function ReaderView({ source, onClose }: ReaderViewProps) {
         }
     };
 
+    // 处理网页高亮
+    const handleWebHighlight = async (text: string, selector: string) => {
+        await handleHighlight(text, selector);
+    };
+
     // 处理添加到笔记
     const handleAddToNote = async (text: string, position: string | number) => {
         try {
+            const positionData = typeof position === 'number'
+                ? { page: position }
+                : typeof position === 'string' && position.startsWith('text:')
+                ? { selector: position }
+                : { chapter: String(position) };
+
             // 创建高亮
             const highlight = await createHighlight({
                 sourceId: source.id,
                 content: text,
-                position: typeof position === 'number'
-                    ? { page: position }
-                    : { chapter: String(position) },
+                position: positionData,
+                color: 'rgba(255, 235, 59, 0.4)',
             });
             setHighlights(prev => [highlight, ...prev]);
 
-            // 创建fleeting卡片
-            await createCard('fleeting', text);
+            // 创建fleeting卡片（书摘类型）
+            const card = await createCard('fleeting', text);
+            // 添加 highlight 标签
+            if (card) {
+                const { updateCard } = useAppStore.getState();
+                await updateCard(card.id, { tags: ['highlight'] });
+            }
         } catch (err) {
             console.error("Failed to add to note:", err);
+        }
+    };
+
+    // 处理网页添加到笔记
+    const handleWebAddToNote = async (text: string, selector: string) => {
+        await handleAddToNote(text, selector);
+    };
+
+    // 刷新网页快照
+    const handleRefreshSnapshot = async () => {
+        if (!source.url) return;
+        setIsLoadingSnapshot(true);
+        try {
+            if (api.isTauriEnv()) {
+                const fetchResult = await api.webReader.fetchWebpage(source.url);
+                const snapshot = await api.webReader.saveSnapshot(
+                    source.id,
+                    source.url,
+                    fetchResult
+                );
+                setWebSnapshot(snapshot);
+            }
+        } catch (err) {
+            console.error("Failed to refresh snapshot:", err);
+        } finally {
+            setIsLoadingSnapshot(false);
         }
     };
 
@@ -134,7 +221,12 @@ export function ReaderView({ source, onClose }: ReaderViewProps) {
     // 提取高亮到Inbox
     const handleExtractToInbox = async (highlight: Highlight) => {
         try {
-            await createCard('fleeting', highlight.content);
+            const card = await createCard('fleeting', highlight.content);
+            // 添加 highlight 标签
+            if (card) {
+                const { updateCard } = useAppStore.getState();
+                await updateCard(card.id, { tags: ['highlight'] });
+            }
         } catch (err) {
             console.error("Failed to extract to inbox:", err);
         }
@@ -160,29 +252,91 @@ export function ReaderView({ source, onClose }: ReaderViewProps) {
         URL.revokeObjectURL(url);
     };
 
-    // 如果没有文件URL，显示占位内容
-    if (!fileUrl || !fileType) {
-        return (
-            <div className="absolute inset-0 bg-white z-30 flex flex-col animate-in slide-in-from-right duration-200">
-                <div className="h-12 border-b border-zinc-200 flex items-center justify-between px-4 bg-zinc-50 shrink-0">
-                    <div className="flex items-center gap-4">
-                        <button
-                            onClick={onClose}
-                            className="hover:bg-zinc-200 rounded-sm p-1 text-zinc-500 transition-colors flex items-center gap-2"
-                        >
-                            <ChevronLeft size={16} />
-                            <span className="text-xs font-medium">Back to Bookshelf</span>
-                        </button>
+    // 如果是网页类型，检查快照
+    if (source.type === 'webpage' || source.type === 'article') {
+        if (isLoadingSnapshot) {
+            return (
+                <div className="absolute inset-0 bg-white z-30 flex flex-col animate-in slide-in-from-right duration-200">
+                    <div className="h-12 border-b border-zinc-200 flex items-center justify-between px-4 bg-zinc-50 shrink-0">
+                        <div className="flex items-center gap-4">
+                            <button
+                                onClick={onClose}
+                                className="hover:bg-zinc-200 rounded-sm p-1 text-zinc-500 transition-colors flex items-center gap-2"
+                            >
+                                <ChevronLeft size={16} />
+                                <span className="text-xs font-medium">Back to Bookshelf</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div className="flex-1 flex items-center justify-center text-zinc-400">
+                        <div className="text-center">
+                            <Book size={48} className="mx-auto mb-4 opacity-30 animate-pulse" />
+                            <p className="text-sm">正在加载网页内容...</p>
+                        </div>
                     </div>
                 </div>
-                <div className="flex-1 flex items-center justify-center text-zinc-400">
-                    <div className="text-center">
-                        <Book size={48} className="mx-auto mb-4 opacity-30" />
-                        <p className="text-sm">No file available for this source</p>
+            );
+        }
+        
+        if (!webSnapshot) {
+            return (
+                <div className="absolute inset-0 bg-white z-30 flex flex-col animate-in slide-in-from-right duration-200">
+                    <div className="h-12 border-b border-zinc-200 flex items-center justify-between px-4 bg-zinc-50 shrink-0">
+                        <div className="flex items-center gap-4">
+                            <button
+                                onClick={onClose}
+                                className="hover:bg-zinc-200 rounded-sm p-1 text-zinc-500 transition-colors flex items-center gap-2"
+                            >
+                                <ChevronLeft size={16} />
+                                <span className="text-xs font-medium">Back to Bookshelf</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div className="flex-1 flex items-center justify-center text-zinc-400">
+                        <div className="text-center">
+                            <Book size={48} className="mx-auto mb-4 opacity-30" />
+                            <p className="text-sm mb-2">无法加载网页内容</p>
+                            {source.url && (
+                                <p className="text-xs text-zinc-500 mb-4">{source.url}</p>
+                            )}
+                            {api.isTauriEnv() && source.url && (
+                                <button
+                                    onClick={handleRefreshSnapshot}
+                                    className="text-xs text-blue-600 hover:underline"
+                                >
+                                    重试
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </div>
-            </div>
-        );
+            );
+        }
+    } else {
+        // 文件类型：如果没有文件URL，显示占位内容
+        if (!fileUrl || !fileType) {
+            return (
+                <div className="absolute inset-0 bg-white z-30 flex flex-col animate-in slide-in-from-right duration-200">
+                    <div className="h-12 border-b border-zinc-200 flex items-center justify-between px-4 bg-zinc-50 shrink-0">
+                        <div className="flex items-center gap-4">
+                            <button
+                                onClick={onClose}
+                                className="hover:bg-zinc-200 rounded-sm p-1 text-zinc-500 transition-colors flex items-center gap-2"
+                            >
+                                <ChevronLeft size={16} />
+                                <span className="text-xs font-medium">Back to Bookshelf</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div className="flex-1 flex items-center justify-center text-zinc-400">
+                        <div className="text-center">
+                            <Book size={48} className="mx-auto mb-4 opacity-30" />
+                            <p className="text-sm">No file available for this source</p>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
     }
 
     return (
@@ -241,17 +395,34 @@ export function ReaderView({ source, onClose }: ReaderViewProps) {
             <div className="flex-1 flex overflow-hidden">
                 {/* Main Reader Content */}
                 <div className="flex-1 overflow-hidden bg-white relative">
-                    <UnifiedReader
-                        url={fileUrl}
-                        fileType={fileType}
-                        sourceId={source.id}
-                        sourceTitle={source.title}
-                        highlights={highlights}
-                        onHighlight={handleHighlight}
-                        onAddToNote={handleAddToNote}
-                        onProgress={handleProgress}
-                        className="h-full"
-                    />
+                    {source.type === 'webpage' || source.type === 'article' ? (
+                        webSnapshot && (
+                            <WebReader
+                                snapshot={webSnapshot}
+                                sourceId={source.id}
+                                sourceTitle={source.title}
+                                highlights={highlights}
+                                onHighlight={handleWebHighlight}
+                                onAddToNote={handleWebAddToNote}
+                                onRefresh={handleRefreshSnapshot}
+                                className="h-full"
+                            />
+                        )
+                    ) : (
+                        fileUrl && fileType && (
+                            <UnifiedReader
+                                url={fileUrl}
+                                fileType={fileType}
+                                sourceId={source.id}
+                                sourceTitle={source.title}
+                                highlights={highlights}
+                                onHighlight={handleHighlight}
+                                onAddToNote={handleAddToNote}
+                                onProgress={handleProgress}
+                                className="h-full"
+                            />
+                        )
+                    )}
                 </div>
 
                 {/* Literature Notes Sidebar */}

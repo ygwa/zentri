@@ -10,6 +10,7 @@ pub enum CardType {
     Literature,
     Permanent,
     Project,
+    Canvas,
 }
 
 impl Default for CardType {
@@ -25,6 +26,7 @@ impl CardType {
             CardType::Literature => "literature",
             CardType::Permanent => "permanent",
             CardType::Project => "project",
+            CardType::Canvas => "canvas",
         }
     }
 
@@ -34,6 +36,7 @@ impl CardType {
             "literature" => CardType::Literature,
             "permanent" => CardType::Permanent,
             "project" => CardType::Project,
+            "canvas" => CardType::Canvas,
             _ => CardType::Fleeting,
         }
     }
@@ -68,7 +71,11 @@ pub struct Card {
     pub tags: Vec<String>,
     #[serde(rename = "type")]
     pub card_type: CardType,
+    /// TipTap JSON 内容 (序列化后的字符串)
     pub content: String,
+    /// 纯文本内容 (用于搜索索引)
+    #[serde(default)]
+    pub plain_text: String,
     pub preview: Option<String>,
     pub created_at: i64,
     pub modified_at: i64,
@@ -118,4 +125,3 @@ impl From<Card> for CardListItem {
         }
     }
 }
-

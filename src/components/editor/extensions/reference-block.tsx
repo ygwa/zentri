@@ -1,10 +1,11 @@
 import { Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer, NodeViewWrapper } from "@tiptap/react";
-import { Quote, MapPin, MessageSquare, BookOpen, FileText } from "lucide-react";
+import { Quote, MapPin, MessageSquare, BookOpen, FileText, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { readerNavigation, createNavigationTarget } from "@/lib/reader-navigation";
 
 export interface ReferenceBlockOptions {
-  onLocate?: (sourceId: string, location: { page?: number; cfi?: string }) => void;
+  onLocate?: (sourceId: string, location: { page?: number; cfi?: string; selector?: string }) => void;
 }
 
 declare module "@tiptap/core" {
@@ -28,18 +29,36 @@ const ReferenceBlockComponent = ({ node, extension }: {
   node: { attrs: Record<string, unknown> };
   extension: { options: ReferenceBlockOptions };
 }) => {
-  const { sourceId, sourceTitle, quoteContent, page, cfi, sourceType, comment } = node.attrs as {
+  const { sourceId, sourceTitle, quoteContent, page, cfi, selector, sourceType, comment } = node.attrs as {
     sourceId: string;
     sourceTitle?: string;
     quoteContent: string;
     page?: number;
     cfi?: string;
+    selector?: string;
     sourceType?: string;
     comment?: string;
   };
   const { onLocate } = extension.options;
   
-  const SourceIcon = sourceType === "epub" ? BookOpen : FileText;
+  // 选择图标
+  const SourceIcon = sourceType === "epub" ? BookOpen : sourceType === "webpage" ? Globe : FileText;
+
+  // 处理跳转
+  const handleLocate = () => {
+    // 使用全局导航系统
+    const target = createNavigationTarget({
+      sourceId,
+      sourceType,
+      page,
+      cfi,
+      selector,
+    });
+    readerNavigation.navigateTo(target);
+    
+    // 同时调用自定义回调（如果有）
+    onLocate?.(sourceId, { page, cfi, selector });
+  };
 
   return (
     <NodeViewWrapper className="reference-block my-4">
@@ -75,7 +94,7 @@ const ReferenceBlockComponent = ({ node, extension }: {
               variant="ghost" 
               size="sm" 
               className="h-6 px-2 text-xs gap-1 hover:bg-amber-100 hover:text-amber-700"
-              onClick={() => onLocate?.(sourceId, { page, cfi })}
+              onClick={handleLocate}
             >
               <MapPin className="h-3 w-3" />
               跳转原文
@@ -110,10 +129,11 @@ export const ReferenceBlock = Node.create<ReferenceBlockOptions>({
     return {
       sourceId: { default: null },
       sourceTitle: { default: null },
-      sourceType: { default: "pdf" }, // "pdf" or "epub"
+      sourceType: { default: "pdf" }, // "pdf", "epub", or "webpage"
       quoteContent: { default: "" },
       page: { default: null },
       cfi: { default: null }, // For EPUB
+      selector: { default: null }, // For webpage
       comment: { default: null },
     };
   },

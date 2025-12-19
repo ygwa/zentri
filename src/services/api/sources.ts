@@ -28,6 +28,7 @@ export async function create(data: Omit<Source, "id" | "createdAt" | "updatedAt"
     title: data.title,
     author: data.author,
     url: data.url,
+    cover: data.cover,
     description: data.description,
     tags: data.tags || [],
   };
@@ -42,6 +43,7 @@ export async function update(id: string, updates: Partial<Source>): Promise<Sour
     title: updates.title,
     author: updates.author,
     url: updates.url,
+    cover: updates.cover,
     description: updates.description,
     tags: updates.tags,
     progress: updates.progress,

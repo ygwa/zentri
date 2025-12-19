@@ -1,5 +1,6 @@
 export { EpubReader } from "./epub-reader";
 export { PdfReader } from "./pdf-reader";
+export { WebReader } from "./web-reader";
 
 import { EpubReader } from "./epub-reader";
 import { PdfReader } from "./pdf-reader";

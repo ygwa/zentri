@@ -1,13 +1,12 @@
 //! 文件监听器模块
 //! 监听 Vault 目录的文件变化，自动触发索引更新
 
-use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher, Event, EventKind};
 use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use notify_debouncer_mini::{new_debouncer, DebouncedEvent, Debouncer};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
-use tokio::sync::mpsc as tokio_mpsc;
 
 /// 文件变更事件
 #[derive(Debug, Clone)]

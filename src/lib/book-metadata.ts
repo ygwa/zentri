@@ -198,3 +198,5 @@ export function generatePlaceholderCover(title: string, type: 'book' | 'paper' =
   return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
 }
 
+
+

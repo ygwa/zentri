@@ -66,6 +66,14 @@ export interface Source {
   updatedAt: number;
 }
 
+// PDF 矩形坐标
+export interface PdfRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 // 文献笔记高亮/摘录
 export interface Highlight {
   id: string;
@@ -74,13 +82,34 @@ export interface Highlight {
   content: string; // 高亮内容
   note?: string; // 批注
   position?: {
-    // 位置信息（用于定位）
+    // 通用字段
     page?: number;
     chapter?: string;
     startOffset?: number;
     endOffset?: number;
+    // EPUB 专用 - CFI
+    cfi?: string;
+    // PDF 专用 - 精确坐标
+    rects?: PdfRect[];
+    // 网页专用
+    selector?: string;
+    textOffset?: number;
   };
   color?: string;
+  createdAt: number;
+}
+
+// 网页快照（阅读模式）
+export interface WebSnapshot {
+  id: string;
+  sourceId: string;
+  originalUrl: string;
+  title: string;
+  author?: string;
+  siteName?: string;
+  content: string; // 清洗后的 HTML 内容
+  textContent: string; // 纯文本内容（用于搜索）
+  excerpt?: string;
   createdAt: number;
 }
 

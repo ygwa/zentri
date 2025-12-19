@@ -139,8 +139,8 @@ export function ProjectEditorView({ projectId, onClose }: ProjectEditorViewProps
     const handleCreateCard = useCallback(async (title: string) => {
         try {
             const { createCard } = useAppStore.getState();
-            // TODO: In real app, we might want to link this back to project?
-            const newCard = await createCard('permanent', title);
+            // Link this new card back to the project
+            const newCard = await createCard('permanent', title, project.id);
             return { id: newCard.id, title: newCard.title };
         } catch (err) {
             console.error("Failed to create card:", err);
@@ -154,6 +154,12 @@ export function ProjectEditorView({ projectId, onClose }: ProjectEditorViewProps
             updateCard(project.id, { title: newTitle });
         }
     }, [project.id, project.title, updateCard]);
+
+    // 处理链接点击
+    const handleLinkClick = useCallback((id: string) => {
+        useAppStore.getState().selectCard(id);
+        onClose();
+    }, [onClose]);
 
     return (
         <div className="absolute inset-0 bg-[#f4f4f5] z-30 flex flex-col animate-in slide-in-from-bottom-2 duration-150">
@@ -191,19 +197,19 @@ export function ProjectEditorView({ projectId, onClose }: ProjectEditorViewProps
             {/* Main Split Layout */}
             <div className="flex-1 flex overflow-hidden">
                 {/* Main Writing Area */}
-                <div className="flex-1 flex flex-col bg-[#F9F9FB] border-r border-zinc-200 overflow-hidden relative">
+                <div className="flex-1 flex flex-col bg-[#F9F9FB] border-r border-zinc-200 overflow-hidden relative min-w-0">
                     <div className="flex-1 overflow-y-auto scroll-smooth flex flex-col">
                         {/* Floating Toolbar Container */}
-                        <div className="sticky top-4 z-10 pointer-events-none flex justify-center h-10 mb-[-40px]">
+                        <div className="sticky top-4 z-10 pointer-events-none flex justify-center h-10 mb-[-40px] min-w-0">
                             <div className="pointer-events-auto">
                                 <TiptapToolbar editor={editorInstance} />
                             </div>
                         </div>
 
-                        {/* Document Surface */}
-                        <div className="max-w-[850px] w-full mx-auto my-8 bg-white flex-1 min-h-[0] shadow-sm border border-zinc-200 px-16 py-16 transition-all flex flex-col">
+                        {/* Document Surface - A4 纸大小，居中显示，固定高度，内容在内部滚动 */}
+                        <div className="max-w-[850px] min-w-[500px] w-full mx-auto my-8 bg-white shadow-sm border border-zinc-200 px-16 py-16 transition-all flex flex-col h-[calc(100vh-120px)]" style={{ marginLeft: 'max(16px, calc((100% - 850px) / 2))', marginRight: 'max(16px, calc((100% - 850px) / 2))' }}>
                             {/* Project Title */}
-                            <div className="mb-8 border-b border-zinc-100 pb-4">
+                            <div className="mb-8 border-b border-zinc-100 pb-4 shrink-0">
                                 <input
                                     value={project.title || 'Untitled Project'}
                                     onChange={(e) => handleTitleChange(e.target.value)}
@@ -212,20 +218,23 @@ export function ProjectEditorView({ projectId, onClose }: ProjectEditorViewProps
                                 />
                             </div>
 
-                            {/* Editor Area */}
-                            <div className="flex-1 relative min-h-[500px]">
-                                <ZentriEditor
-                                    key={projectId}
-                                    content={normalizeContent(project.content)}
-                                    onChange={handleContentChange}
-                                    cards={cardsForAutocomplete}
-                                    onCreateCard={handleCreateCard}
-                                    placeholder="Start writing your project..."
-                                    className="font-serif text-lg leading-relaxed h-full"
-                                    onEditorReady={(editor) => {
-                                        setEditorInstance(editor);
-                                    }}
-                                />
+                            {/* Editor Area - 可滚动区域 */}
+                            <div className="flex-1 relative min-h-0 overflow-y-auto">
+                                <div className="h-full">
+                                    <ZentriEditor
+                                        key={projectId}
+                                        content={normalizeContent(project.content)}
+                                        onChange={handleContentChange}
+                                        cards={cardsForAutocomplete}
+                                        onCreateCard={handleCreateCard}
+                                        onLinkClick={handleLinkClick}
+                                        placeholder="Start writing your project..."
+                                        className="font-serif text-lg leading-relaxed h-full"
+                                        onEditorReady={(editor) => {
+                                            setEditorInstance(editor);
+                                        }}
+                                    />
+                                </div>
                             </div>
                         </div>
                     </div>

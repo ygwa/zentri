@@ -86,6 +86,7 @@ pub struct CreateSourceRequest {
     pub title: String,
     pub author: Option<String>,
     pub url: Option<String>,
+    pub cover: Option<String>,
     pub description: Option<String>,
     pub tags: Vec<String>,
 }
@@ -97,6 +98,7 @@ pub struct UpdateSourceRequest {
     pub title: Option<String>,
     pub author: Option<String>,
     pub url: Option<String>,
+    pub cover: Option<String>,
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
     pub progress: Option<i32>,

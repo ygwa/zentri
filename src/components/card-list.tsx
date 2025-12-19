@@ -5,11 +5,35 @@ import { useAppStore } from "@/store";
 import type { Card, CardType, EditorContent } from "@/types";
 import { Sparkles, BookOpen, StickyNote, FolderKanban } from "lucide-react";
 
-// 辅助函数：将 content 转换为字符串
+// 辅助函数：从 TipTap JSON 提取文本预览
 function contentToString(content: string | EditorContent | undefined): string {
   if (!content) return "";
   if (typeof content === "string") return content;
-  return JSON.stringify(content);
+  
+  // 从 TipTap JSON 提取文本
+  const extractText = (node: any): string => {
+    if (!node) return '';
+    if (node.text) return node.text;
+    if (node.type === 'wikiLink' && node.attrs?.title) {
+      return `[[${node.attrs.title}]]`;
+    }
+    if (node.content && Array.isArray(node.content)) {
+      return node.content.map(extractText).join('');
+    }
+    return '';
+  };
+  
+  if ('content' in content && Array.isArray(content.content)) {
+    const text = content.content
+      .map(extractText)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 150);
+    return text;
+  }
+  
+  return "";
 }
 
 const typeConfig: Record<CardType, { icon: React.ElementType; color: string }> = {
@@ -67,9 +91,14 @@ function CardItem({ card, isSelected }: { card: Card; isSelected: boolean }) {
       </h3>
 
       {/* 预览 */}
-      <p className="mb-2 text-sm text-muted-foreground line-clamp-2">
-        {contentToString(card.content) || "暂无内容"}
-      </p>
+      {(() => {
+        const preview = contentToString(card.content);
+        return (
+          <p className={`mb-2 text-sm line-clamp-2 ${preview ? 'text-muted-foreground' : 'text-muted-foreground/50 italic'}`}>
+            {preview || "暂无内容"}
+          </p>
+        );
+      })()}
 
       {/* 标签 */}
       {card.tags.length > 0 && (

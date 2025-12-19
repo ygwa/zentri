@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Search, Plus, Layout, BookOpen, GitGraph, Settings, Repeat, Hash,
-  Command, FolderKanban, Sparkles, Monitor
+  Command, FolderKanban, Sparkles, Monitor, FileText, Loader2
 } from "lucide-react";
 import { useAppStore } from "@/store";
 import { cn } from "@/lib/utils";
+import * as api from "@/services/api";
+import type { SearchResult } from "@/services/api/types";
 
 interface Command {
   id: string;
@@ -19,12 +21,16 @@ interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
   onViewChange: (view: string) => void;
+  onOpenCard?: (id: string) => void;
 }
 
-export function CommandPalette({ isOpen, onClose, onViewChange }: CommandPaletteProps) {
+export function CommandPalette({ isOpen, onClose, onViewChange, onOpenCard }: CommandPaletteProps) {
   const { createCard, selectCard } = useAppStore();
   const [search, setSearch] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchMode, setSearchMode] = useState<'commands' | 'cards'>('commands');
 
   const commands: Command[] = [
     // 导航命令
@@ -67,13 +73,52 @@ export function CommandPalette({ isOpen, onClose, onViewChange }: CommandPalette
     cmd.category?.toLowerCase().includes(search.toLowerCase())
   );
 
+  // 判断是否应该进入搜索模式 (输入超过2个字符且不是命令关键词)
+  const shouldSearch = useMemo(() => {
+    if (search.length < 2) return false;
+    const commandKeywords = ['go', 'open', 'create', 'new', 'toggle', 'show'];
+    const searchLower = search.toLowerCase();
+    return !commandKeywords.some(kw => searchLower.startsWith(kw));
+  }, [search]);
+
+  // 搜索卡片
+  useEffect(() => {
+    if (!isOpen || !shouldSearch) {
+      setSearchResults([]);
+      setSearchMode('commands');
+      return;
+    }
+
+    const searchCards = async () => {
+      setIsSearching(true);
+      setSearchMode('cards');
+      try {
+        const results = await api.search.search(search);
+        setSearchResults(results);
+      } catch (err) {
+        console.error('Search failed:', err);
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    };
+
+    const debounceTimer = setTimeout(searchCards, 200);
+    return () => clearTimeout(debounceTimer);
+  }, [search, isOpen, shouldSearch]);
+
+  // 合并后的项目列表
+  const totalItems = searchMode === 'cards' && searchResults.length > 0 
+    ? searchResults.length 
+    : filteredCommands.length;
+
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (!isOpen) return;
 
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
-        setSelectedIndex(i => Math.min(i + 1, filteredCommands.length - 1));
+        setSelectedIndex(i => Math.min(i + 1, totalItems - 1));
         break;
       case 'ArrowUp':
         e.preventDefault();
@@ -81,7 +126,16 @@ export function CommandPalette({ isOpen, onClose, onViewChange }: CommandPalette
         break;
       case 'Enter':
         e.preventDefault();
-        if (filteredCommands[selectedIndex]) {
+        if (searchMode === 'cards' && searchResults[selectedIndex]) {
+          const result = searchResults[selectedIndex];
+          if (onOpenCard) {
+            onOpenCard(result.id);
+          } else {
+            selectCard(result.id);
+          }
+          onClose();
+          setSearch('');
+        } else if (filteredCommands[selectedIndex]) {
           const cmd = filteredCommands[selectedIndex];
           if (cmd.action) cmd.action();
           onClose();
@@ -91,9 +145,11 @@ export function CommandPalette({ isOpen, onClose, onViewChange }: CommandPalette
       case 'Escape':
         onClose();
         setSearch('');
+        setSearchResults([]);
+        setSearchMode('commands');
         break;
     }
-  }, [isOpen, selectedIndex, filteredCommands, onClose]);
+  }, [isOpen, selectedIndex, filteredCommands, searchResults, searchMode, onClose, onOpenCard, selectCard, totalItems]);
 
   useEffect(() => {
     if (isOpen) {
@@ -102,6 +158,11 @@ export function CommandPalette({ isOpen, onClose, onViewChange }: CommandPalette
       return () => document.removeEventListener('keydown', handleKeyDown);
     }
   }, [isOpen, handleKeyDown]);
+
+  // 重置选中索引
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [search, searchMode]);
 
   if (!isOpen) return null;
 
@@ -128,65 +189,153 @@ export function CommandPalette({ isOpen, onClose, onViewChange }: CommandPalette
           <div className="text-[10px] font-bold text-zinc-300 bg-zinc-50 border border-zinc-100 px-1.5 py-0.5 rounded-sm">ESC</div>
         </div>
 
-        {/* 命令列表 */}
+        {/* 命令/搜索结果列表 */}
         <div className="max-h-[400px] overflow-y-auto py-2">
-          {Object.entries(categoryGroups).map(([category, cmds]) => (
-            <div key={category}>
-              <div className="px-4 py-1 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
-                {category}
+          {/* 搜索中状态 */}
+          {isSearching && (
+            <div className="flex items-center justify-center py-6 text-zinc-400">
+              <Loader2 size={16} className="animate-spin mr-2" />
+              <span className="text-sm">搜索中...</span>
+            </div>
+          )}
+
+          {/* 卡片搜索结果 */}
+          {!isSearching && searchMode === 'cards' && searchResults.length > 0 && (
+            <>
+              <div className="px-4 py-1 text-[10px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+                <FileText size={10} />
+                搜索结果 ({searchResults.length})
               </div>
-              {cmds.map((cmd) => {
-                const globalIndex = filteredCommands.findIndex(c => c.id === cmd.id);
-                const isSelected = globalIndex === selectedIndex;
-                const Icon = cmd.icon;
+              {searchResults.map((result, index) => {
+                const isSelected = index === selectedIndex;
                 return (
                   <div
-                    key={cmd.id}
+                    key={result.id}
                     onClick={() => {
-                      if (cmd.action) cmd.action();
+                      if (onOpenCard) {
+                        onOpenCard(result.id);
+                      } else {
+                        selectCard(result.id);
+                      }
                       onClose();
                       setSearch('');
                     }}
                     className={cn(
-                      "px-4 py-2.5 flex items-center justify-between cursor-pointer group",
+                      "px-4 py-2.5 cursor-pointer group",
                       isSelected ? "bg-blue-50" : "hover:bg-zinc-50"
                     )}
                   >
                     <div className="flex items-center gap-3">
                       <div className={cn(
-                        "p-1 rounded-sm",
-                        isSelected ? "text-blue-600" : "text-zinc-400 group-hover:text-zinc-600"
+                        "p-1 rounded-sm shrink-0",
+                        isSelected ? "text-blue-600" : "text-zinc-400"
                       )}>
-                        <Icon size={14} />
+                        <FileText size={14} />
                       </div>
-                      <span className={cn(
-                        "text-sm",
-                        isSelected ? "text-blue-900 font-medium" : "text-zinc-700"
-                      )}>{cmd.label}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className={cn(
+                          "text-sm truncate",
+                          isSelected ? "text-blue-900 font-medium" : "text-zinc-700"
+                        )}>
+                          {result.title || 'Untitled'}
+                        </div>
+                        {result.snippet && (
+                          <div 
+                            className="text-xs text-zinc-400 truncate mt-0.5"
+                            dangerouslySetInnerHTML={{ 
+                              __html: result.snippet.replace(/<mark>/g, '<span class="bg-yellow-200 text-yellow-900 rounded px-0.5">').replace(/<\/mark>/g, '</span>')
+                            }}
+                          />
+                        )}
+                      </div>
+                      <div className="shrink-0 flex gap-1">
+                        {result.tags?.slice(0, 2).map(tag => (
+                          <span key={tag} className="text-[9px] text-zinc-500 bg-zinc-100 px-1 rounded">#{tag}</span>
+                        ))}
+                      </div>
                     </div>
-                    {cmd.shortcut && (
-                      <span className="text-[10px] font-mono text-zinc-400">{cmd.shortcut}</span>
-                    )}
                   </div>
                 );
               })}
-            </div>
-          ))}
+            </>
+          )}
 
-          {filteredCommands.length === 0 && (
-            <div className="py-6 text-center text-sm text-muted-foreground">
-              No commands found
-            </div>
+          {/* 命令列表 (当没有搜索结果或未搜索时) */}
+          {!isSearching && (searchMode === 'commands' || searchResults.length === 0) && (
+            <>
+              {Object.entries(categoryGroups).map(([category, cmds]) => (
+                <div key={category}>
+                  <div className="px-4 py-1 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                    {category}
+                  </div>
+                  {cmds.map((cmd) => {
+                    const globalIndex = filteredCommands.findIndex(c => c.id === cmd.id);
+                    const isSelected = globalIndex === selectedIndex && searchMode === 'commands';
+                    const Icon = cmd.icon;
+                    return (
+                      <div
+                        key={cmd.id}
+                        onClick={() => {
+                          if (cmd.action) cmd.action();
+                          onClose();
+                          setSearch('');
+                        }}
+                        className={cn(
+                          "px-4 py-2.5 flex items-center justify-between cursor-pointer group",
+                          isSelected ? "bg-blue-50" : "hover:bg-zinc-50"
+                        )}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className={cn(
+                            "p-1 rounded-sm",
+                            isSelected ? "text-blue-600" : "text-zinc-400 group-hover:text-zinc-600"
+                          )}>
+                            <Icon size={14} />
+                          </div>
+                          <span className={cn(
+                            "text-sm",
+                            isSelected ? "text-blue-900 font-medium" : "text-zinc-700"
+                          )}>{cmd.label}</span>
+                        </div>
+                        {cmd.shortcut && (
+                          <span className="text-[10px] font-mono text-zinc-400">{cmd.shortcut}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+
+              {filteredCommands.length === 0 && !shouldSearch && (
+                <div className="py-6 text-center text-sm text-muted-foreground">
+                  未找到命令
+                </div>
+              )}
+
+              {shouldSearch && searchResults.length === 0 && !isSearching && (
+                <div className="py-6 text-center text-sm text-muted-foreground">
+                  未找到匹配的卡片
+                </div>
+              )}
+            </>
           )}
         </div>
 
         {/* 底部提示 */}
         <div className="flex items-center justify-between border-t px-4 py-3 text-xs text-muted-foreground bg-zinc-50">
           <div className="flex gap-4">
-            <span><kbd className="rounded border px-1">↑</kbd> <kbd className="rounded border px-1">↓</kbd> Navigate</span>
-            <span><kbd className="rounded border px-1">Enter</kbd> Select</span>
+            <span><kbd className="rounded border px-1">↑</kbd> <kbd className="rounded border px-1">↓</kbd> 导航</span>
+            <span><kbd className="rounded border px-1">Enter</kbd> 选择</span>
           </div>
-          <span>{filteredCommands.length} commands</span>
+          <div className="flex items-center gap-2">
+            {searchMode === 'cards' ? (
+              <span className="text-blue-600">{searchResults.length} 个卡片</span>
+            ) : (
+              <span>{filteredCommands.length} 个命令</span>
+            )}
+            <span className="text-zinc-300">|</span>
+            <span className="text-zinc-400">输入关键词搜索卡片</span>
+          </div>
         </div>
       </div>
 

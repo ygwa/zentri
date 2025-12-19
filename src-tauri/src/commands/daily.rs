@@ -1,8 +1,8 @@
 //! Daily Note 相关命令
 
-use crate::storage;
 use crate::models::{Card, CardListItem, CardType};
 use crate::state::AppState;
+use crate::storage;
 use tauri::State;
 
 /// 获取或创建今日日记
@@ -22,7 +22,7 @@ pub fn get_or_create_daily_note(state: State<AppState>) -> Result<Card, String> 
     let today = chrono::Local::now();
     let date_str = today.format("%Y-%m-%d").to_string();
     let daily_id = format!("daily-{}", date_str);
-    
+
     // 检查是否已存在
     if let Some(card) = storage::read_card(&vault_path, &daily_id) {
         return Ok(card);
@@ -30,13 +30,13 @@ pub fn get_or_create_daily_note(state: State<AppState>) -> Result<Card, String> 
 
     // 创建新的日记卡片
     let title = format!("日记 {}", date_str);
-    
+
     // 使用带有默认内容的 JSON 创建
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64;
-    
+
     let content = serde_json::json!({
         "type": "doc",
         "content": [
@@ -84,9 +84,12 @@ pub fn get_or_create_daily_note(state: State<AppState>) -> Result<Card, String> 
     });
 
     // 日记放在 00_Inbox 目录
-    let card_path = vault_path.join("cards").join("00_Inbox").join(format!("{}.json", daily_id));
+    let card_path = vault_path
+        .join("cards")
+        .join("00_Inbox")
+        .join(format!("{}.json", daily_id));
     let content_str = serde_json::to_string_pretty(&storage_data).map_err(|e| e.to_string())?;
-    
+
     // 原子写入
     let tmp_path = card_path.with_extension("json.tmp");
     std::fs::write(&tmp_path, &content_str).map_err(|e| e.to_string())?;
@@ -94,14 +97,18 @@ pub fn get_or_create_daily_note(state: State<AppState>) -> Result<Card, String> 
 
     // 更新索引
     let mut index = storage::read_index(&vault_path);
-    index.cards.insert(daily_id.clone(), storage::CardIndexEntry {
-        title: title.clone(),
-        card_type: CardType::Fleeting,
-        tags: vec!["daily".to_string()],
-        links: vec![],
-        source_id: None,
-        updated_at: now,
-    });
+    index.cards.insert(
+        daily_id.clone(),
+        storage::CardIndexEntry {
+            title: title.clone(),
+            card_type: CardType::Fleeting,
+            tags: vec!["daily".to_string()],
+            links: vec![],
+            source_id: None,
+            updated_at: now,
+            preview: None,
+        },
+    );
     index.last_updated = now;
     storage::save_index(&vault_path, &index)?;
 
@@ -125,7 +132,10 @@ pub fn get_daily_note(state: State<AppState>, date: String) -> Result<Option<Car
 
 /// 获取日记列表（按日期倒序）
 #[tauri::command]
-pub fn get_daily_notes(state: State<AppState>, limit: Option<usize>) -> Result<Vec<CardListItem>, String> {
+pub fn get_daily_notes(
+    state: State<AppState>,
+    limit: Option<usize>,
+) -> Result<Vec<CardListItem>, String> {
     let vault_path = state
         .vault_path
         .lock()

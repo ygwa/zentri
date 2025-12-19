@@ -42,13 +42,14 @@ pub fn poll_file_changes(state: State<AppState>) -> Result<FileChangeInfo, Strin
                 if let Some(id) = path.file_stem().and_then(|s| s.to_str()) {
                     if let Some(card) = storage::read_card(&vault_path, id) {
                         if let Some(idx) = indexer {
-                            idx.index_doc(
+                            idx.index_doc_with_type(
                                 &card.id,
                                 &card.title,
-                                &card.content,
+                                &card.plain_text,
                                 &card.tags,
                                 &card.path,
                                 card.modified_at,
+                                Some(card.card_type.as_str()),
                             ).ok();
                         }
                         changed_ids.push(card.id);
@@ -76,13 +77,14 @@ pub fn poll_file_changes(state: State<AppState>) -> Result<FileChangeInfo, Strin
                 if let Some(new_id) = new_path.file_stem().and_then(|s| s.to_str()) {
                     if let Some(card) = storage::read_card(&vault_path, new_id) {
                         if let Some(idx) = indexer {
-                            idx.index_doc(
+                            idx.index_doc_with_type(
                                 &card.id,
                                 &card.title,
-                                &card.content,
+                                &card.plain_text,
                                 &card.tags,
                                 &card.path,
                                 card.modified_at,
+                                Some(card.card_type.as_str()),
                             ).ok();
                         }
                         changed_ids.push(card.id);

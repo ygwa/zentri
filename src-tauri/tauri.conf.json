@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "zentri",
+  "productName": "Zentri",
   "version": "0.1.0",
   "identifier": "com.maiglis.zentri",
   "build": {
@@ -12,9 +12,14 @@
   "app": {
     "windows": [
       {
-        "title": "zentri",
-        "width": 800,
-        "height": 600
+        "label": "main",
+        "title": "Zentri",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "center": true
       }
     ],
     "security": {
@@ -39,6 +44,25 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": [],
+    "externalBin": [],
+    "copyright": "Copyright © 2024 maiglis",
+    "category": "Productivity",
+    "shortDescription": "知识管理应用",
+    "longDescription": "Zentri 是一个现代化的知识管理应用，帮助您构建个人知识库。支持多种笔记类型、知识图谱可视化、全文搜索、PDF/EPUB 阅读、网页抓取等功能。",
+    "macOS": {
+      "frameworks": [],
+      "minimumSystemVersion": "10.13",
+      "exceptionDomain": "",
+      "signingIdentity": null,
+      "providerShortName": null,
+      "entitlements": null
+    },
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    }
   }
 }

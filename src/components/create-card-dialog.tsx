@@ -10,9 +10,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { Sparkles, BookOpen, StickyNote, FolderKanban } from "lucide-react";
+import { Sparkles, BookOpen, StickyNote, FolderKanban, Lightbulb, HelpCircle, BookMarked } from "lucide-react";
 import { useAppStore } from "@/store";
 import type { CardType } from "@/types";
+
+type InboxType = "idea" | "question" | "highlight";
 
 const cardTypes: { id: CardType; label: string; desc: string; icon: React.ElementType; color: string }[] = [
   {
@@ -50,18 +52,61 @@ interface CreateCardDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+const inboxTypes: { id: InboxType; label: string; desc: string; icon: React.ElementType; color: string; tag: string }[] = [
+  {
+    id: "idea",
+    label: "想法",
+    desc: "记录你的想法",
+    icon: Lightbulb,
+    color: "border-yellow-500 bg-yellow-500/10 text-yellow-600",
+    tag: "idea",
+  },
+  {
+    id: "question",
+    label: "问题",
+    desc: "记录待调研的问题",
+    icon: HelpCircle,
+    color: "border-blue-500 bg-blue-500/10 text-blue-600",
+    tag: "question",
+  },
+  {
+    id: "highlight",
+    label: "书摘",
+    desc: "记录阅读摘录",
+    icon: BookMarked,
+    color: "border-green-500 bg-green-500/10 text-green-600",
+    tag: "highlight",
+  },
+];
+
 export function CreateCardDialog({ open, onOpenChange }: CreateCardDialogProps) {
-  const { createCard, selectCard } = useAppStore();
+  const { createCard, updateCard } = useAppStore();
   const [type, setType] = useState<CardType>("fleeting");
+  const [inboxType, setInboxType] = useState<InboxType>("idea");
   const [title, setTitle] = useState("");
 
   const handleCreate = async () => {
     if (!title.trim()) return;
+    
+    // 创建卡片
     const card = await createCard(type, title.trim());
-    selectCard(card.id);
+    
+    // 如果是 fleeting 类型（inbox），添加对应的标签
+    if (type === "fleeting") {
+      const selectedInboxType = inboxTypes.find(t => t.id === inboxType);
+      if (selectedInboxType) {
+        await updateCard(card.id, { tags: [selectedInboxType.tag] });
+      }
+      // 不自动打开编辑器，只保存标题
+    } else {
+      // 其他类型可以自动打开编辑器（如果需要的话）
+      // 这里暂时不打开，保持一致性
+    }
+    
     onOpenChange(false);
     setTitle("");
     setType("fleeting");
+    setInboxType("idea");
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -102,6 +147,34 @@ export function CreateCardDialog({ open, onOpenChange }: CreateCardDialogProps) 
             })}
           </div>
 
+          {/* Inbox 子类型选择（仅当选择 fleeting 时显示） */}
+          {type === "fleeting" && (
+            <div className="space-y-2">
+              <Label>Inbox 类型</Label>
+              <div className="grid grid-cols-3 gap-2">
+                {inboxTypes.map((it) => {
+                  const Icon = it.icon;
+                  return (
+                    <button
+                      key={it.id}
+                      onClick={() => setInboxType(it.id)}
+                      className={cn(
+                        "flex flex-col items-center gap-2 rounded-lg border-2 p-3 text-center transition-colors",
+                        inboxType === it.id ? it.color : "border-transparent hover:bg-accent"
+                      )}
+                    >
+                      <Icon className="h-5 w-5" />
+                      <div>
+                        <p className="text-sm font-medium">{it.label}</p>
+                        <p className="text-xs text-muted-foreground">{it.desc}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* 标题输入 */}
           <div className="space-y-2">
             <Label htmlFor="title">标题</Label>
@@ -110,9 +183,14 @@ export function CreateCardDialog({ open, onOpenChange }: CreateCardDialogProps) 
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="输入卡片标题..."
+              placeholder={type === "fleeting" ? "输入标题（创建后可在编辑时添加描述）..." : "输入卡片标题..."}
               autoFocus
             />
+            {type === "fleeting" && (
+              <p className="text-xs text-muted-foreground">
+                创建后卡片将保存到 Inbox，编辑时可以添加详细描述
+              </p>
+            )}
           </div>
         </div>
 

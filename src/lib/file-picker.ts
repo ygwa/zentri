@@ -41,7 +41,13 @@ export async function pickFile(
         input.accept = extensions.map((ext) => `.${ext}`).join(",");
       }
 
+      // 标记是否已处理
+      let handled = false;
+
       input.onchange = () => {
+        if (handled) return;
+        handled = true;
+        
         const file = input.files?.[0];
         if (file) {
           // 在浏览器环境中，我们可以创建一个 blob URL
@@ -55,7 +61,31 @@ export async function pickFile(
         }
       };
 
-      input.oncancel = () => resolve(null);
+      // oncancel 在一些浏览器中不支持，使用 focus 事件作为备选
+      input.oncancel = () => {
+        if (handled) return;
+        handled = true;
+        resolve(null);
+      };
+
+      // 监听 focus 事件作为取消的备选检测
+      // 当用户关闭文件对话框后，窗口会重新获得焦点
+      const handleFocus = () => {
+        // 延迟检查，给 onchange 事件时间触发
+        setTimeout(() => {
+          if (!handled) {
+            handled = true;
+            resolve(null);
+          }
+          window.removeEventListener("focus", handleFocus);
+        }, 300);
+      };
+
+      // 延迟添加 focus 监听器，避免立即触发
+      setTimeout(() => {
+        window.addEventListener("focus", handleFocus);
+      }, 100);
+
       input.click();
     });
   }

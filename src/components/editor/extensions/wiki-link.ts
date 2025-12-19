@@ -1,6 +1,5 @@
-import { Mark, mergeAttributes } from "@tiptap/core";
+import { Node, mergeAttributes, InputRule, PasteRule } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
-import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
 export interface WikiLinkOptions {
   HTMLAttributes: Record<string, unknown>;
@@ -12,55 +11,41 @@ declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     wikiLink: {
       setWikiLink: (attributes: { href: string; title: string }) => ReturnType;
-      unsetWikiLink: () => ReturnType;
+      insertWikiLink: (attributes: { href: string; title: string }) => ReturnType;
     };
   }
 }
 
-/**
- * 从文档内容中提取所有 [[双链]] 的标题
- */
 export function extractWikiLinkTitles(text: string): string[] {
+  // This helper might need update if we store as nodes, but for plain text extraction it's still useful.
+  // However, JSON content structure changes.
+  // We keep it for legacy or raw text processing.
   const wikiLinkRegex = /\[\[([^\]]+)\]\]/g;
   const titles: string[] = [];
   let match;
-  
   while ((match = wikiLinkRegex.exec(text)) !== null) {
-    const title = match[1].trim();
-    if (title && !titles.includes(title)) {
-      titles.push(title);
-    }
+    titles.push(match[1]);
   }
-  
   return titles;
 }
 
-/**
- * 根据标题列表和卡片列表，返回匹配的卡片 ID 列表
- */
-export function resolveWikiLinksToIds(
-  titles: string[],
-  cards: Array<{ id: string; title: string }>
-): string[] {
-  const ids: string[] = [];
-  
-  for (const title of titles) {
-    const card = cards.find(c => c.title === title);
-    if (card && !ids.includes(card.id)) {
-      ids.push(card.id);
-    }
-  }
-  
-  return ids;
+export function resolveWikiLinksToIds(titles: string[], cards: Array<{ id: string; title: string }>): string[] {
+  // Same as before
+  return titles.map(t => cards.find(c => c.title === t)?.id).filter(Boolean) as string[];
 }
 
-export const WikiLink = Mark.create<WikiLinkOptions>({
+export const WikiLink = Node.create<WikiLinkOptions>({
   name: "wikiLink",
+  group: "inline",
+  inline: true,
+  selectable: true,
+  draggable: true,
+  atom: true, // Atomic node
 
   addOptions() {
     return {
       HTMLAttributes: {
-        class: "wiki-link",
+        class: "wiki-link-chip",
       },
       cards: [],
       onLinkClick: undefined,
@@ -71,20 +56,13 @@ export const WikiLink = Mark.create<WikiLinkOptions>({
     return {
       href: {
         default: null,
-        parseHTML: (element) => element.getAttribute("data-href"),
-        renderHTML: (attributes) => {
-          if (!attributes.href) return {};
-          return { "data-href": attributes.href };
-        },
       },
       title: {
         default: null,
-        parseHTML: (element) => element.getAttribute("data-title"),
-        renderHTML: (attributes) => {
-          if (!attributes.title) return {};
-          return { "data-title": attributes.title };
-        },
       },
+      exists: {
+        default: false,
+      }
     };
   },
 
@@ -92,107 +70,170 @@ export const WikiLink = Mark.create<WikiLinkOptions>({
     return [
       {
         tag: 'span[data-type="wiki-link"]',
+        getAttrs: (element) => {
+          if (typeof element === 'string') return {};
+          return {
+            href: element.getAttribute('data-href'),
+            title: element.getAttribute('data-title'),
+            exists: element.getAttribute('data-exists') === 'true',
+          };
+        }
       },
     ];
   },
 
-  renderHTML({ HTMLAttributes }) {
+  renderHTML({ node, HTMLAttributes }) {
+    const isExists = node.attrs.exists;
+    const title = node.attrs.title || '';
     return [
       "span",
       mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
         "data-type": "wiki-link",
+        "data-href": node.attrs.href,
+        "data-title": node.attrs.title,
+        "data-exists": isExists,
+        class: isExists ? 'wiki-link-chip' : 'wiki-link-chip ghost',
       }),
-      0,
+      // 渲染为 [[ title ]] 格式
+      `[[${title}]]`,
+    ];
+  },
+
+  addPasteRules() {
+    return [
+      new PasteRule({
+        find: /\[\[([^\]]+)\]\]/g,
+        handler: ({ state, range, match }: { state: any; range: any; match: any }) => {
+          const { tr } = state;
+          const start = range.from;
+          const end = range.to;
+          const title = match[1];
+
+          if (!title) return;
+
+          const card = this.options.cards.find(c => c.title === title);
+          const exists = !!card;
+          const href = card?.id || null;
+
+          tr.replaceWith(start, end, this.type.create({
+            title,
+            href,
+            exists
+          }));
+        },
+      }),
+    ];
+  },
+
+  addInputRules() {
+    return [
+      new InputRule({
+        find: /\[\[([^\]]+)\]\]$/,
+        handler: ({ state, range, match }) => {
+          const { tr } = state;
+          const start = range.from;
+          const end = range.to;
+          const title = match[1];
+
+          if (!title) return;
+
+          const card = this.options.cards.find(c => c.title === title);
+          const exists = !!card;
+          const href = card?.id || null;
+
+          tr.replaceWith(start, end, this.type.create({
+            title,
+            href,
+            exists
+          }));
+        },
+      }),
     ];
   },
 
   addCommands() {
     return {
-      setWikiLink:
-        (attributes) =>
-        ({ commands }) => {
-          return commands.setMark(this.name, attributes);
-        },
-      unsetWikiLink:
-        () =>
-        ({ commands }) => {
-          return commands.unsetMark(this.name);
-        },
+      setWikiLink: (attributes: { href: string; title: string }) => ({ state, dispatch }) => {
+        const { selection } = state;
+        const { from, to } = selection;
+        
+        // 查找卡片以确定 exists 状态
+        const card = this.options.cards.find(c => c.id === attributes.href || c.title === attributes.title);
+        const exists = !!card;
+        
+        const node = this.type.create({
+          title: attributes.title,
+          href: attributes.href,
+          exists
+        });
+        
+        if (dispatch) {
+          const tr = state.tr.replaceWith(from, to, node);
+          dispatch(tr);
+        }
+        
+        return true;
+      },
+      insertWikiLink: (attributes: { href: string; title: string }) => ({ state, dispatch }) => {
+        // 查找卡片以确定 exists 状态
+        const card = this.options.cards.find(c => c.id === attributes.href || c.title === attributes.title);
+        const exists = !!card;
+        
+        const node = this.type.create({
+          title: attributes.title,
+          href: attributes.href,
+          exists
+        });
+        
+        if (dispatch) {
+          const { selection } = state;
+          const { from } = selection;
+          const tr = state.tr.insert(from, node);
+          dispatch(tr);
+        }
+        
+        return true;
+      }
     };
   },
 
-  // 添加插件来处理 [[link]] 语法
   addProseMirrorPlugins() {
-    const { onLinkClick, cards } = this.options;
-    
-    // 构建标题到卡片的 Map，加速查找
-    const cardsByTitle = new Map<string, { id: string; title: string }>();
-    cards.forEach(card => {
-      cardsByTitle.set(card.title, card);
-    });
+    const { onLinkClick } = this.options;
 
     return [
       new Plugin({
-        key: new PluginKey("wikiLinkHandler"),
+        key: new PluginKey('wikiLinkClick'),
         props: {
-          // 处理点击事件
-          handleClick(_view, _pos, event) {
+          handleClick: (view, _pos, event) => {
             const target = event.target as HTMLElement;
-            if (target.classList.contains("wiki-link")) {
-              const href = target.getAttribute("data-href");
-              if (href && onLinkClick) {
-                event.preventDefault();
-                onLinkClick(href);
+            
+            // 点击链接本身，在侧边栏预览（不跳转）
+            const chip = target.closest('.wiki-link-chip');
+            if (chip && onLinkClick) {
+              event.preventDefault();
+              event.stopPropagation();
+              
+              // 清除选择，避免触发 bubble toolbar
+              const { state, dispatch } = view;
+              // 创建一个空选择，确保不会触发 toolbar
+              const Selection = state.selection.constructor as any;
+              const emptySelection = Selection.create(state.doc, state.selection.$anchor.pos);
+              const tr = state.tr.setSelection(emptySelection);
+              dispatch(tr);
+              
+              const href = chip.getAttribute('data-href');
+              if (href) {
+                // 延迟调用，确保选择已清除
+                setTimeout(() => {
+                  onLinkClick(href);
+                }, 0);
                 return true;
               }
             }
             return false;
-          },
-          // 装饰器：渲染 [[link]] 为可点击的链接样式
-          decorations(state) {
-            const decorations: Decoration[] = [];
-            const { doc } = state;
-
-            // 只匹配 [[title]] 格式
-            const wikiLinkRegex = /\[\[([^\]]+)\]\]/g;
-
-            doc.descendants((node, pos) => {
-              if (!node.isText || !node.text) return;
-
-              let match;
-              while ((match = wikiLinkRegex.exec(node.text)) !== null) {
-                const start = pos + match.index;
-                const end = start + match[0].length;
-                
-                const title = match[1].trim();
-                
-                // 使用 Map 快速查找
-                const card = cardsByTitle.get(title);
-                const linkId = card?.id || "";
-                const exists = !!card;
-
-                // 两种状态的样式类：
-                // 1. wiki-link: 存在的卡片（可点击打开）
-                // 2. wiki-link wiki-link-ghost: 不存在的卡片（可点击创建）
-                const className = exists ? "wiki-link" : "wiki-link wiki-link-ghost";
-                const titleText = exists ? `点击打开: ${title}` : `点击创建: ${title}`;
-
-                decorations.push(
-                  Decoration.inline(start, end, {
-                    class: className,
-                    "data-href": linkId,
-                    "data-title": title,
-                    "data-exists": exists ? "true" : "false",
-                    title: titleText,
-                  })
-                );
-              }
-            });
-
-            return DecorationSet.create(doc, decorations);
-          },
-        },
-      }),
-    ];
-  },
+          }
+        }
+      })
+    ]
+  }
 });

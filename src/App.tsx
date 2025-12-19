@@ -3,12 +3,16 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { VaultSelector } from "@/components/vault-selector";
 import { useAppStore } from "@/store";
 import { isTauriEnv } from "@/services/api";
+import { useWindowState } from "@/hooks/use-window-state";
 
 import "./App.css";
 
 function App() {
-  const { isInitialized, isLoading, vaultPath, error, initialize, setVaultPath } =
+  const { isInitialized, isLoading, vaultPath, error, initialize, setInitialVaultPath } =
     useAppStore();
+
+  // 初始化窗口状态管理（保存和恢复窗口位置、大小）
+  useWindowState();
 
   // 初始化应用
   useEffect(() => {

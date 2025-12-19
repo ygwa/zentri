@@ -33,6 +33,7 @@ interface AppState {
 
   // 初始化
   initialize: () => Promise<void>;
+  setInitialVaultPath: (path: string) => Promise<void>;
   setVaultPath: (path: string) => Promise<void>;
 
   // UI Actions
@@ -126,6 +127,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           ]);
 
           get().startFileWatching();
+
+          // 在后台同步搜索索引（不阻塞初始化）
+          api.search.syncIndex().catch((err) => {
+            console.warn("Failed to sync search index:", err);
+          });
         }
       } catch (e) {
         console.warn("Failed to get vault path or load data:", e);
@@ -135,6 +141,40 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (err) {
       console.error("Failed to initialize:", err);
       set({ isInitialized: true, isLoading: false });
+    }
+  },
+
+  setInitialVaultPath: async (path: string) => {
+    try {
+      set({ isLoading: true, error: null });
+      get().stopFileWatching();
+
+      if (api.isTauriEnv()) {
+        await api.vault.setPath(path);
+      }
+
+      set({ vaultPath: path });
+
+      await Promise.all([
+        get().loadCards(),
+        get().loadSources(),
+        get().loadHighlights(),
+      ]);
+
+      get().startFileWatching();
+
+      // 在后台同步搜索索引（不阻塞初始化）
+      api.search.syncIndex().catch((err) => {
+        console.warn("Failed to sync search index:", err);
+      });
+
+      set({ isLoading: false });
+    } catch (err) {
+      console.error("Failed to set vault path:", err);
+      set({
+        isLoading: false,
+        error: err instanceof Error ? err.message : "设置路径失败",
+      });
     }
   },
 
@@ -156,6 +196,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       ]);
 
       get().startFileWatching();
+
+      // 在后台同步搜索索引（不阻塞初始化）
+      api.search.syncIndex().catch((err) => {
+        console.warn("Failed to sync search index:", err);
+      });
+
       set({ isLoading: false });
     } catch (err) {
       console.error("Failed to set vault path:", err);
@@ -186,18 +232,41 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (!api.isTauriEnv()) return;
 
       const cardsData = await api.cards.getAll();
-      const cards: Card[] = cardsData.map((c) => ({
-        id: c.id,
-        type: c.type,
-        title: c.title,
-        // 列表加载时不包含内容，使用空文档占位（会触发懒加载）
-        content: { type: 'doc', content: [] },
-        tags: c.tags || [],
-        links: c.links || [],
-        sourceId: c.sourceId,
-        createdAt: c.createdAt,
-        updatedAt: c.modifiedAt,
-      }));
+      const cards: Card[] = cardsData.map((c) => {
+        // 如果有 preview，将其转换为包含文本的内容结构，用于列表显示
+        let content: EditorContent;
+        if (c.preview && c.preview.trim()) {
+          content = {
+            type: 'doc',
+            content: [
+              {
+                type: 'paragraph',
+                content: [
+                  {
+                    type: 'text',
+                    text: c.preview,
+                  },
+                ],
+              },
+            ],
+          };
+        } else {
+          // 列表加载时不包含内容，使用空文档占位（会触发懒加载）
+          content = { type: 'doc', content: [] };
+        }
+
+        return {
+          id: c.id,
+          type: c.type,
+          title: c.title,
+          content,
+          tags: c.tags || [],
+          links: c.links || [],
+          sourceId: c.sourceId,
+          createdAt: c.createdAt,
+          updatedAt: c.modifiedAt,
+        };
+      });
 
       set({ cards });
     } catch (err) {
@@ -205,26 +274,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  loadCardContent: async (id: string) => {
-    try {
-      if (!api.isTauriEnv()) return;
 
-      const card = await api.cards.get(id);
-      if (!card) return;
-
-      // 解析内容 - 支持 JSON 格式和旧的 Markdown 格式
-      const rawContent = typeof card.content === 'string' ? card.content : JSON.stringify(card.content);
-      const content = parseCardContent(rawContent);
-
-      set((state) => ({
-        cards: state.cards.map((c) =>
-          c.id === id ? { ...c, content, links: card.links || [] } : c
-        ),
-      }));
-    } catch (err) {
-      console.error("Failed to load card content:", err);
-    }
-  },
 
   createCard: async (type, title, sourceId) => {
     if (!api.isTauriEnv()) {
@@ -647,6 +697,35 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!source) return [];
     return get().cards.filter((card) => source.noteIds.includes(card.id));
   },
+
+  loadCardContent: async (id: string) => {
+    try {
+      if (!api.isTauriEnv()) return;
+
+      const card = await api.cards.get(id);
+      if (!card) return;
+
+      const rawContentAny = card.content as any;
+      console.log("loadCardContent: Raw from API:", {
+        id,
+        typeofContent: typeof rawContentAny,
+        length: typeof rawContentAny === 'string' ? rawContentAny.length : 'obj'
+      });
+
+      // 解析内容 - 支持 JSON 格式和旧的 Markdown 格式
+      const rawContent = typeof rawContentAny === 'string' ? rawContentAny : JSON.stringify(rawContentAny);
+      const content = parseCardContent(rawContent);
+      console.log("loadCardContent: Parsed:", { id, contentType: content.type, childCount: content.content?.length });
+
+      set((state) => ({
+        cards: state.cards.map((c) =>
+          c.id === id ? { ...c, content, links: card.links || [] } : c
+        ),
+      }));
+    } catch (err) {
+      console.error("Failed to load card content:", err);
+    }
+  },
 }));
 
 // ==================== 工具函数 ====================
@@ -667,13 +746,16 @@ function parseCardContent(content: string | undefined | null): EditorContent {
       // 验证是否是有效的 TipTap JSON 格式
       if (parsed.type === "doc") {
         return parsed as EditorContent;
+      } else {
+        console.warn("parseCardContent: JSON parsed but type is not 'doc'", parsed.type);
       }
-    } catch {
-      // 解析失败
+    } catch (e) {
+      console.warn("parseCardContent: JSON parse failed", e);
     }
   }
 
   // 如果解析失败或不是 JSON，返回空文档结构（不再支持 raw string）
+  console.log("parseCardContent: Fallback to wrapping as text");
   return { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: content }] }] };
 }
 
@@ -689,9 +771,22 @@ function extractWikiLinksFromContent(content: EditorContent, cards: Card[] = [])
 
 /**
  * 递归从 TipTap JSON 节点中提取 wiki links
- * 注意：WikiLink 是 Mark，不是 Node，所以需要从文本中提取 [[title]] 格式
+ * 支持两种格式：
+ * 1. wikiLink 节点（原子节点）
+ * 2. 文本节点中的 wikiLink mark
+ * 3. 文本中的 [[title]] 格式（作为后备方案）
  */
 function extractLinksFromNode(node: EditorContent | { type: string; attrs?: Record<string, unknown>; content?: unknown[]; marks?: Array<{ type: string; attrs?: Record<string, unknown> }>; text?: string }, links: string[], cards: Card[] = []): void {
+  // 如果是 wikiLink 节点（原子节点）
+  if (node.type === "wikiLink" && "attrs" in node && node.attrs) {
+    const href = node.attrs.href as string | undefined;
+    if (href && !links.includes(href)) {
+      links.push(href);
+    }
+    // wikiLink 节点是原子节点，没有子节点，直接返回
+    return;
+  }
+
   // 如果是文本节点，检查是否有 wikiLink mark
   if (node.type === "text" && "text" in node && node.text) {
     const text = node.text;

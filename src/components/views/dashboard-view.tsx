@@ -4,6 +4,8 @@ import { useAppStore } from "@/store";
 import { Card as CardData } from "@/types";
 import { StatusStrip } from "@/components/ui/status-strip";
 import { FleetingNoteModal } from "./fleeting-note-modal";
+import { hasCardContent } from "@/lib/content-preview";
+import { cn } from "@/lib/utils";
 
 interface DashboardViewProps {
     onOpenCard: (id: string) => void;
@@ -30,28 +32,43 @@ function getCardStatus(card: CardData, allCards: CardData[]): 'healthy' | 'orpha
 
 // 提取内容预览文本
 function getContentPreview(content: CardData['content']): string {
+    if (!content) return '';
+    
+    // 递归提取文本的辅助函数
+    const extractText = (node: any): string => {
+        if (!node) return '';
+        if (node.text) return node.text;
+        if (node.type === 'wikiLink' && node.attrs?.title) {
+            return `[[${node.attrs.title}]]`;
+        }
+        if (node.content && Array.isArray(node.content)) {
+            return node.content.map(extractText).join('');
+        }
+        return '';
+    };
+    
     // 尝试从TipTap JSON中提取文本
-    if (content && typeof content === 'object' && 'content' in content) {
-        const extractText = (node: any): string => {
-            if (node.text) return node.text;
-            if (node.content && Array.isArray(node.content)) {
-                return node.content.map(extractText).join(' ');
-            }
-            return '';
-        };
-        const text = (content.content || []).map(extractText).join(' ').slice(0, 100);
-        return text || 'No content...';
+    if (typeof content === 'object' && 'content' in content && Array.isArray(content.content)) {
+        const text = content.content
+            .map(extractText)
+            .join(' ')
+            .replace(/\s+/g, ' ')  // 合并多个空格
+            .trim()
+            .slice(0, 120);
+        return text;
     }
-    return 'No content...';
+    
+    return '';
 }
 
 export function DashboardView({ onOpenCard, onOpenProject }: DashboardViewProps) {
-    const { cards, createCard } = useAppStore();
+    const { cards, createCard, convertCard } = useAppStore();
     const [quickInput, setQuickInput] = useState('');
     const [libraryFilter, setLibraryFilter] = useState<LibraryFilterType>('all');
     const [editingFleetingId, setEditingFleetingId] = useState<string | null>(null);
 
 
+    // 过滤 fleeting 卡片，已归档的卡片仍然显示在 inbox 中（但可以有不同的视觉标识）
     const fleetingCards = cards.filter(c => c.type === 'fleeting');
     const permanentCards = cards.filter(c => c.type === 'permanent');
     const literatureCards = cards.filter(c => c.type === 'literature');
@@ -89,10 +106,13 @@ export function DashboardView({ onOpenCard, onOpenProject }: DashboardViewProps)
                 ]
             };
             const newCard = await createCard('fleeting', '', undefined);
-            // 立即更新内容
+            // 立即更新内容和标签（快速输入默认为想法）
             if (newCard) {
                 const { updateCard } = useAppStore.getState();
-                await updateCard(newCard.id, { content: jsonContent as any });
+                await updateCard(newCard.id, { 
+                    content: jsonContent as any,
+                    tags: ['idea']
+                });
             }
             setQuickInput('');
         }
@@ -115,41 +135,71 @@ export function DashboardView({ onOpenCard, onOpenProject }: DashboardViewProps)
                 <div className="p-2 border-b border-zinc-200 bg-white">
                     <div className="relative">
                         <textarea
-                            className="w-full text-xs bg-zinc-50 border border-zinc-200 rounded-sm p-2 focus:outline-none focus:border-blue-500 focus:ring-0 transition-all resize-none font-sans placeholder-zinc-400 text-zinc-700"
-                            rows={2}
-                            placeholder="Cmd+I to capture..."
+                            className="w-full text-xs bg-zinc-50 border border-zinc-200 rounded-sm p-2.5 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 focus:bg-white transition-all resize-none font-sans placeholder-zinc-400 text-zinc-700 leading-relaxed"
+                            rows={1}
+                            placeholder="快速记录想法... (Enter 发送)"
                             value={quickInput}
                             onChange={(e) => setQuickInput(e.target.value)}
                             onKeyDown={handleQuickInput}
                         />
-                        <div className="absolute right-2 bottom-2 text-[9px] text-zinc-400 font-mono border border-zinc-200 px-1 rounded-sm">⏎</div>
+                        {quickInput && (
+                            <div className="absolute right-2 bottom-2 text-[9px] text-blue-500 font-mono border border-blue-200 bg-blue-50 px-1.5 py-0.5 rounded-sm">
+                                Enter ↵
+                            </div>
+                        )}
                     </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                    {fleetingCards.map((item) => {
-                        // 闪念笔记优先显示内容预览，如果没有内容则显示标题
-                        const displayText = getContentPreview(item.content) || item.title || 'Empty note';
-                        return (
-                            <div
-                                key={item.id}
-                                className="group relative p-3 bg-white rounded-sm border border-zinc-200 hover:border-blue-400 hover:shadow-sm transition-all cursor-pointer"
-                                onClick={() => setEditingFleetingId(item.id)}
-                            >
-                                <p className="text-xs text-zinc-800 leading-relaxed mb-2 font-medium">{displayText}</p>
-                                <div className="flex justify-between items-center">
-                                    <div className="flex gap-1">
-                                        {item.tags.slice(0, 2).map(tag => (
-                                            <span key={tag} className="text-[9px] text-blue-600 font-mono bg-blue-50 px-1 rounded-sm border border-blue-100">#{tag}</span>
-                                        ))}
+                    {fleetingCards.length === 0 ? (
+                        <div className="text-center py-8 text-zinc-400 text-xs">
+                            <p className="mb-1">暂无闪念</p>
+                            <p className="text-[10px]">按 Cmd+I 快速记录</p>
+                        </div>
+                    ) : (
+                        fleetingCards.map((item) => {
+                            // 闪念笔记优先显示内容预览，如果没有内容则显示标题
+                            const preview = getContentPreview(item.content);
+                            const displayText = preview || item.title || '';
+                            const isEmpty = !displayText;
+                            const isArchived = item.tags.includes('archived');
+                            
+                            return (
+                                <div
+                                    key={item.id}
+                                    className={cn(
+                                        "group relative p-3 rounded-sm border transition-all cursor-pointer",
+                                        isArchived
+                                            ? "bg-zinc-50 border-zinc-300 hover:border-zinc-400 opacity-75"
+                                            : "bg-white border-zinc-200 hover:border-blue-400 hover:shadow-sm"
+                                    )}
+                                    onClick={() => setEditingFleetingId(item.id)}
+                                >
+                                    {isArchived && (
+                                        <div className="absolute top-2 right-2">
+                                            <span className="text-[8px] text-zinc-500 bg-zinc-200 px-1 rounded border border-zinc-300 font-mono">ARCHIVED</span>
+                                        </div>
+                                    )}
+                                    <p className={cn(
+                                        "text-xs leading-relaxed mb-2 font-medium line-clamp-3",
+                                        isEmpty ? 'text-zinc-400 italic' : isArchived ? 'text-zinc-600' : 'text-zinc-800'
+                                    )}>
+                                        {isEmpty ? '空白笔记，点击编辑...' : displayText}
+                                    </p>
+                                    <div className="flex justify-between items-center">
+                                        <div className="flex gap-1 flex-wrap">
+                                            {item.tags.filter(t => t !== 'archived').slice(0, 2).map(tag => (
+                                                <span key={tag} className="text-[9px] text-blue-600 font-mono bg-blue-50 px-1 rounded-sm border border-blue-100">#{tag}</span>
+                                            ))}
+                                        </div>
+                                        <span className="text-[9px] text-zinc-400 font-mono shrink-0">
+                                            {new Date(item.updatedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: 'numeric' })}
+                                        </span>
                                     </div>
-                                    <span className="text-[9px] text-zinc-400 font-mono">
-                                        {new Date(item.updatedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: 'numeric' })}
-                                    </span>
                                 </div>
-                            </div>
-                        );
-                    })}
+                            );
+                        })
+                    )}
                 </div>
             </div>
 
@@ -240,8 +290,8 @@ export function DashboardView({ onOpenCard, onOpenProject }: DashboardViewProps)
                                             <Book size={10} /> Ref: {card.sourceId.slice(0, 8)}
                                         </div>
                                     )}
-                                    <p className="text-[11px] text-zinc-600 line-clamp-1 leading-relaxed mb-1.5 font-normal">
-                                        {preview}
+                                    <p className={`text-[11px] line-clamp-1 leading-relaxed mb-1.5 font-normal ${preview ? 'text-zinc-600' : 'text-zinc-400 italic'}`}>
+                                        {preview || '暂无内容...'}
                                     </p>
 
                                     <div className="flex justify-between items-center">
@@ -313,16 +363,18 @@ export function DashboardView({ onOpenCard, onOpenProject }: DashboardViewProps)
                                         </div>
                                     )}
                                 </div>
+                                <div className="m-2">
                                 <button
                                     onClick={() => {
                                         if (onOpenProject) {
                                             onOpenProject(project.id);
                                         }
                                     }}
-                                    className="w-full text-center py-1.5 bg-zinc-900 text-white text-[10px] font-bold uppercase rounded-sm hover:bg-zinc-800 transition-colors mt-2 mx-2 mb-2"
+                                    className="w-full cursor-pointer text-center py-1.5 bg-zinc-900 text-white text-[10px] font-bold uppercase rounded-sm hover:bg-zinc-800 transition-colors"
                                 >
                                     Open Editor
                                 </button>
+                                </div>
                                 <div className="w-full h-1 bg-zinc-100">
                                     <div className="h-full bg-blue-500" style={{ width: `${progress}%` }}></div>
                                 </div>
@@ -338,8 +390,20 @@ export function DashboardView({ onOpenCard, onOpenProject }: DashboardViewProps)
                 <FleetingNoteModal
                     cardId={editingFleetingId}
                     onClose={() => setEditingFleetingId(null)}
-                    onDelete={() => setEditingFleetingId(null)}
-                    onConvertToPermanent={() => console.log("Convert logic to be implemented")}
+                    onDelete={async (id) => {
+                        await useAppStore.getState().deleteCard(id);
+                        setEditingFleetingId(null);
+                    }}
+                    onConvertToPermanent={async (id) => {
+                        // 这个回调现在不会被直接调用，因为转换逻辑在 modal 内部处理
+                        // 但保留它以防其他地方需要
+                        setEditingFleetingId(null);
+                    }}
+                    onOpenPermanentNote={(id) => {
+                        // 打开新创建的永久笔记
+                        setEditingFleetingId(null);
+                        onOpenCard(id);
+                    }}
                 />
             )}
         </div>

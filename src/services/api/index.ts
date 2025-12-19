@@ -13,4 +13,6 @@ export * as search from "./search";
 export * as graph from "./graph";
 export * as dailyNote from "./daily-note";
 export * as watcher from "./watcher";
+export * as crdt from "./crdt";
+export * as webReader from "./web-reader";
 

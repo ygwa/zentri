@@ -11,11 +11,35 @@ import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store";
 import type { Card, CardType, ViewType, EditorContent } from "@/types";
 
-// 辅助函数：将 content 转换为字符串
+// 辅助函数：从 TipTap JSON 提取文本预览
 function contentToString(content: string | EditorContent | undefined): string {
   if (!content) return "";
   if (typeof content === "string") return content;
-  return JSON.stringify(content);
+  
+  // 从 TipTap JSON 提取文本
+  const extractText = (node: any): string => {
+    if (!node) return '';
+    if (node.text) return node.text;
+    if (node.type === 'wikiLink' && node.attrs?.title) {
+      return `[[${node.attrs.title}]]`;
+    }
+    if (node.content && Array.isArray(node.content)) {
+      return node.content.map(extractText).join('');
+    }
+    return '';
+  };
+  
+  if ('content' in content && Array.isArray(content.content)) {
+    const text = content.content
+      .map(extractText)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 150);
+    return text;
+  }
+  
+  return "";
 }
 import {
   Sparkles,

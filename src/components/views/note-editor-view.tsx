@@ -5,7 +5,9 @@ import { ZentriEditor } from "@/components/editor";
 import { Badge } from "@/components/ui/badge-new";
 import { TiptapToolbar } from "@/components/ui/tiptap-toolbar";
 import { cn } from "@/lib/utils";
+import { LocalGraph } from "@/components/views/local-graph";
 import { getContentPreview } from "@/lib/content-preview";
+import { ContentRenderer } from "@/components/content-renderer";
 import type { EditorContent, Card } from "@/types";
 import type { JSONContent, Editor } from "@tiptap/core";
 
@@ -17,25 +19,29 @@ interface NoteEditorViewProps {
     onBack?: () => void;
 }
 
+import { preprocessContent } from "@/lib/content-transformer";
+
 // 将EditorContent转换为JSONContent
 function normalizeContent(content: EditorContent | string | undefined): JSONContent | null {
     if (!content) return null;
     if (typeof content === 'string') {
         try {
             const parsed = JSON.parse(content);
-            return parsed as JSONContent;
+            return preprocessContent(parsed) as JSONContent;
         } catch {
-            return {
+            // Fallback for raw string content (convert to paragraph with possible WikiLinks)
+            // Ideally we'd parse the string too, but for now wrap it.
+            return preprocessContent({
                 type: "doc",
                 content: [{ type: "paragraph", content: [{ type: "text", text: content }] }],
-            };
+            }) as JSONContent;
         }
     }
-    return content as JSONContent;
+    return preprocessContent(content as JSONContent) as JSONContent;
 }
 
 export function NoteEditorView({ cardId, onClose, onNavigate, stackSize = 1, onBack }: NoteEditorViewProps) {
-    const { cards, getCardById, updateCard, getSourceById } = useAppStore();
+    const { cards, getCardById, updateCard, getSourceById, loadCardContent } = useAppStore();
     const [showRightSidebar, setShowRightSidebar] = useState(true);
     const [rightSidebarMode, setRightSidebarMode] = useState<'context' | 'feynman'>('context');
     const [previewCard, setPreviewCard] = useState<Card | null>(null as Card | null);
@@ -50,6 +56,14 @@ export function NoteEditorView({ cardId, onClose, onNavigate, stackSize = 1, onB
     const card = getCardById(cardId);
     const source = card?.sourceId ? getSourceById(card.sourceId) : null;
 
+    // Load content on mount or id change
+    useEffect(() => {
+        if (cardId) {
+            console.log("NoteEditorView: dispatching loadCardContent for", cardId);
+            loadCardContent(cardId);
+        }
+    }, [cardId, loadCardContent]);
+
     if (!card) return null;
 
     // 当 cardId 改变时，重置预览和 AI 状态
@@ -62,12 +76,23 @@ export function NoteEditorView({ cardId, onClose, onNavigate, stackSize = 1, onB
     }, [cardId]);
 
     // 处理链接点击 - 预览或打开链接的卡片
-    const handleLinkClick = useCallback((linkId: string) => {
-        const linkedCard = getCardById(linkId) || cards.find(c => c.title === linkId);
-        if (linkedCard) {
-            setPreviewCard(linkedCard);
+    const handleLinkClick = useCallback(async (linkId: string) => {
+        // 先尝试通过 ID 查找
+        let linkedCard = getCardById(linkId);
+        
+        // 如果找不到，尝试通过标题查找
+        if (!linkedCard) {
+            linkedCard = cards.find(c => c.title === linkId);
         }
-    }, [cards, getCardById]);
+        
+        if (linkedCard) {
+            // 确保加载卡片内容
+            await loadCardContent(linkedCard.id);
+            // 重新获取卡片（内容已更新）
+            const updatedCard = getCardById(linkedCard.id) || linkedCard;
+            setPreviewCard(updatedCard);
+        }
+    }, [cards, getCardById, loadCardContent]);
 
     // 打开链接的卡片（全屏）
     const handleOpenLink = useCallback((e: React.MouseEvent, linkId: string) => {
@@ -199,19 +224,19 @@ export function NoteEditorView({ cardId, onClose, onNavigate, stackSize = 1, onB
             {/* Main Workspace: Desk + Card + Sidebar */}
             <div className="flex-1 flex overflow-hidden relative">
                 {/* CENTER: The Desk (Background) */}
-                <div className="flex-1 bg-[#f0f0f2] flex flex-col items-center overflow-y-auto relative" onClick={() => setPreviewCard(null)}>
-                    {/* Engineering Grid Texture */}
-                    <div className="absolute inset-0 pointer-events-none opacity-[0.03]" style={{ backgroundImage: `linear-gradient(#000 1px, transparent 1px), linear-gradient(90deg, #000 1px, transparent 1px)`, backgroundSize: '20px 20px' }}></div>
+                <div className="flex-1 bg-[#f0f0f2] flex flex-col items-center overflow-y-auto relative min-w-0" onClick={() => setPreviewCard(null)}>
+                    {/* Engineering Grid Texture - 确保背景能够扩展到整个可滚动区域 */}
+                    <div className="absolute top-0 left-0 right-0 bottom-0 min-h-full pointer-events-none opacity-[0.03]" style={{ backgroundImage: `linear-gradient(#000 1px, transparent 1px), linear-gradient(90deg, #000 1px, transparent 1px)`, backgroundSize: '20px 20px' }}></div>
 
                     {/* Floating Toolbar Container */}
-                    <div className="sticky top-4 z-10 pointer-events-none flex justify-center w-full">
+                    <div className="sticky top-4 z-10 pointer-events-none flex justify-center w-full min-w-0">
                         <div className="pointer-events-auto">
                             <TiptapToolbar editor={editorInstance} />
                         </div>
                     </div>
 
-                    {/* The "Physical" Card */}
-                    <div className="w-full max-w-[700px] bg-white min-h-[600px] mt-8 mb-20 shadow-2xl border border-zinc-300 transition-all flex flex-col relative rounded-sm">
+                    {/* The "Physical" Card - A4 纸大小，居中显示 */}
+                    <div className="w-full max-w-[700px] min-w-[400px] bg-white min-h-[calc(100vh-160px)] mt-8 mb-20 shadow-2xl border border-zinc-300 transition-all flex flex-col relative rounded-sm" style={{ marginLeft: 'max(16px, calc((100% - 700px) / 2))', marginRight: 'max(16px, calc((100% - 700px) / 2))' }}>
                         {/* Card Decoration Top */}
                         <div className={`h-1 w-full ${card.type === 'permanent' ? 'bg-blue-500' : 'bg-orange-500'}`}></div>
 
@@ -265,6 +290,38 @@ export function NoteEditorView({ cardId, onClose, onNavigate, stackSize = 1, onB
                                         onLinkClick={handleLinkClick}
                                         onEditorReady={(editor) => {
                                             setEditorInstance(editor);
+                                            // 编辑器加载后，更新所有 wiki link 节点的 href
+                                            if (editor) {
+                                                setTimeout(() => {
+                                                    const doc = editor.state.doc;
+                                                    const tr = editor.state.tr;
+                                                    let updated = false;
+                                                    
+                                                    doc.descendants((node, pos) => {
+                                                        if (node.type.name === 'wikiLink') {
+                                                            const title = node.attrs.title;
+                                                            const currentHref = node.attrs.href;
+                                                            // 如果 href 是 title 而不是卡片 ID，尝试查找对应的卡片
+                                                            if (currentHref === title || !currentHref) {
+                                                                const card = cards.find(c => c.title === title || c.id === title);
+                                                                if (card && card.id !== currentHref) {
+                                                                    tr.setNodeMarkup(pos, undefined, {
+                                                                        ...node.attrs,
+                                                                        href: card.id,
+                                                                        exists: true
+                                                                    });
+                                                                    updated = true;
+                                                                }
+                                                            }
+                                                        }
+                                                    });
+                                                    
+                                                    if (updated) {
+                                                        tr.setMeta('addToHistory', false);
+                                                        editor.view.dispatch(tr);
+                                                    }
+                                                }, 100);
+                                            }
                                         }}
                                     />
                                 </div>
@@ -378,41 +435,22 @@ export function NoteEditorView({ cardId, onClose, onNavigate, stackSize = 1, onB
                                         </div>
                                         <h3 className="text-sm font-bold text-zinc-900 leading-tight mb-2">{previewCard.title || 'Untitled'}</h3>
                                     </div>
-                                    <div className="p-4 prose prose-sm prose-zinc font-serif text-zinc-600 overflow-y-auto">
-                                        {getContentPreview(previewCard.content)}
+                                    <div className="p-4 overflow-y-auto">
+                                        <ContentRenderer 
+                                            content={previewCard.content} 
+                                            onLinkClick={handleLinkClick}
+                                        />
                                     </div>
                                 </div>
                             ) : (
                                 // --- CONTEXT MODE (Default) ---
                                 <div>
                                     {/* 1. Interactive Local Graph */}
-                                    <div className="h-48 bg-zinc-50/30 border-b border-zinc-100 relative overflow-hidden flex items-center justify-center group">
-                                        <div className="absolute inset-0 opacity-[0.05]" style={{ backgroundImage: 'linear-gradient(#000 1px, transparent 1px), linear-gradient(90deg, #000 1px, transparent 1px)', backgroundSize: '10px 10px' }}></div>
-
-                                        {/* Mock Graph Visual */}
-                                        <svg className="w-full h-full pointer-events-none">
-                                            {backlinks.length > 0 && (
-                                                <line x1="50%" y1="50%" x2="20%" y2="30%" stroke="#e2e8f0" strokeWidth="1.5" />
-                                            )}
-                                            {linkedCards.length > 0 && (
-                                                <line x1="50%" y1="50%" x2="80%" y2="40%" stroke="#e2e8f0" strokeWidth="1.5" />
-                                            )}
-                                            {backlinks.slice(0, 1).map((_, idx) => (
-                                                <g key={`backlink-${idx}`}>
-                                                    <circle cx="20%" cy="30%" r="3" fill="#cbd5e1" />
-                                                    <text x="20%" y="25%" textAnchor="middle" className="text-[8px] fill-zinc-400">{backlinks[0]?.id.slice(0, 2) || 'D4'}</text>
-                                                </g>
-                                            ))}
-                                            {linkedCards.slice(0, 1).map((linked, idx) => (
-                                                <g key={`linked-${idx}`}>
-                                                    <circle cx="80%" cy="40%" r="3" fill="#cbd5e1" />
-                                                    <text x="80%" y="35%" textAnchor="middle" className="text-[8px] fill-zinc-400">{linked.id.slice(0, 2)}</text>
-                                                </g>
-                                            ))}
-                                            <circle cx="50%" cy="50%" r="5" fill="#3b82f6" stroke="white" strokeWidth="2" />
-                                            <text x="50%" y="60%" textAnchor="middle" className="text-[8px] fill-blue-500 font-bold">CURRENT</text>
-                                        </svg>
-                                    </div>
+                                    <LocalGraph
+                                        centerId={cardId}
+                                        onNodeClick={handleLinkClick}
+                                        className="h-48 w-full border-b border-zinc-100 bg-zinc-50/30"
+                                    />
 
                                     <div className="p-4 space-y-6">
                                         {/* Backlinks */}

@@ -13,6 +13,7 @@ const DIR_INBOX: &str = "00_Inbox";
 const DIR_LITERATURE: &str = "10_Literature";
 const DIR_SLIPBOX: &str = "20_Slipbox";
 const DIR_PROJECTS: &str = "30_Projects";
+const DIR_CANVASES: &str = "40_Canvases";
 
 /// 生成短 ID (类似 nanoid)
 fn generate_id() -> String {
@@ -21,7 +22,7 @@ fn generate_id() -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    
+
     let random: u32 = rand::random();
     format!("{:x}{:x}", (timestamp % 0xFFFFFF) as u32, random % 0xFFFF)
 }
@@ -33,6 +34,7 @@ fn get_type_dir(card_type: &CardType) -> &'static str {
         CardType::Literature => DIR_LITERATURE,
         CardType::Permanent => DIR_SLIPBOX,
         CardType::Project => DIR_PROJECTS,
+        CardType::Canvas => DIR_CANVASES,
     }
 }
 
@@ -83,6 +85,8 @@ pub struct CardIndexEntry {
     #[serde(default)]
     pub source_id: Option<String>,
     pub updated_at: i64,
+    #[serde(default)]
+    pub preview: Option<String>,
 }
 
 /// 索引文件结构
@@ -105,15 +109,21 @@ pub fn ensure_storage_dirs(data_path: &Path) -> Result<(), String> {
             fs::create_dir_all(&path).map_err(|e| e.to_string())?;
         }
     }
-    
+
     // 创建其他目录
-    for dir in ["sources", "files", "highlights"] {
+    for dir in ["sources", "files", "highlights", "canvases"] {
         let path = data_path.join(dir);
         if !path.exists() {
             fs::create_dir_all(&path).map_err(|e| e.to_string())?;
         }
     }
-    
+
+    // 专门为 Canvases 创建（虽然不是 CardType，但为了保持一致性）
+    let canvas_path = data_path.join("canvases").join(DIR_CANVASES);
+    if !canvas_path.exists() {
+        fs::create_dir_all(&canvas_path).map_err(|e| e.to_string())?;
+    }
+
     // 确保 config.json 存在
     let config_path = data_path.join("config.json");
     if !config_path.exists() {
@@ -129,30 +139,149 @@ pub fn ensure_storage_dirs(data_path: &Path) -> Result<(), String> {
         let content = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
         fs::write(&config_path, content).map_err(|e| e.to_string())?;
     }
-    
+
     Ok(())
 }
 
 /// 获取当前时间戳
-fn current_timestamp() -> i64 {
+pub(crate) fn current_timestamp() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64
 }
 
+// -----------------------------------------------------------------------------
+// Canvas Operations
+// -----------------------------------------------------------------------------
+use crate::models::canvas::{Canvas, CanvasListItem};
+
+/// 读取所有 Canvas
+pub fn read_all_canvases(data_path: &Path) -> Vec<CanvasListItem> {
+    let mut canvases = Vec::new();
+    let dir_path = data_path.join("canvases").join(DIR_CANVASES);
+
+    if !dir_path.exists() {
+        return canvases;
+    }
+
+    if let Ok(entries) = fs::read_dir(dir_path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map(|e| e == "json").unwrap_or(false) {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    if let Ok(canvas) = serde_json::from_str::<Canvas>(&content) {
+                        canvases.push(canvas.into());
+                    }
+                }
+            }
+        }
+    }
+
+    canvases.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    canvases
+}
+
+/// 读取单个 Canvas
+pub fn read_canvas(data_path: &Path, id: &str) -> Option<Canvas> {
+    let path = data_path
+        .join("canvases")
+        .join(DIR_CANVASES)
+        .join(format!("{}.json", id));
+
+    if path.exists() {
+        if let Ok(content) = fs::read_to_string(path) {
+            return serde_json::from_str(&content).ok();
+        }
+    }
+    None
+}
+
+/// 创建 Canvas
+pub fn create_canvas(data_path: &Path, title: &str) -> Result<Canvas, String> {
+    let id = generate_id();
+    let now = current_timestamp();
+
+    let canvas = Canvas {
+        id: id.clone(),
+        title: title.to_string(),
+        nodes: serde_json::json!([]),
+        edges: serde_json::json!([]),
+        created_at: now,
+        updated_at: now,
+    };
+
+    let dir_path = data_path.join("canvases").join(DIR_CANVASES);
+    if !dir_path.exists() {
+        fs::create_dir_all(&dir_path).map_err(|e| e.to_string())?;
+    }
+
+    let path = dir_path.join(format!("{}.json", id));
+    let content = serde_json::to_string_pretty(&canvas).map_err(|e| e.to_string())?;
+
+    fs::write(&path, content).map_err(|e| e.to_string())?;
+
+    Ok(canvas)
+}
+
+/// 更新 Canvas
+pub fn update_canvas(
+    data_path: &Path,
+    id: &str,
+    title: Option<String>,
+    nodes: Option<serde_json::Value>,
+    edges: Option<serde_json::Value>,
+) -> Result<Canvas, String> {
+    let mut canvas = read_canvas(data_path, id).ok_or("Canvas not found")?;
+
+    if let Some(t) = title {
+        canvas.title = t;
+    }
+    if let Some(n) = nodes {
+        canvas.nodes = n;
+    }
+    if let Some(e) = edges {
+        canvas.edges = e;
+    }
+
+    canvas.updated_at = current_timestamp();
+
+    let dir_path = data_path.join("canvases").join(DIR_CANVASES);
+    let path = dir_path.join(format!("{}.json", id));
+    let content = serde_json::to_string_pretty(&canvas).map_err(|e| e.to_string())?;
+
+    fs::write(&path, content).map_err(|e| e.to_string())?;
+
+    Ok(canvas)
+}
+
+/// 删除 Canvas
+pub fn delete_canvas(data_path: &Path, id: &str) -> Result<(), String> {
+    let path = data_path
+        .join("canvases")
+        .join(DIR_CANVASES)
+        .join(format!("{}.json", id));
+
+    if path.exists() {
+        fs::remove_file(path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// 读取索引文件
 pub fn read_index(data_path: &Path) -> StorageIndex {
     let index_path = data_path.join("index.json");
-    
+
     if index_path.exists() {
         if let Ok(content) = fs::read_to_string(&index_path) {
-            if let Ok(index) = serde_json::from_str(&content) {
+            if let Ok(index) = serde_json::from_str::<StorageIndex>(&content) {
+                // Compatibility check: if version is old or previews missing, maybe mark for rebuild?
+                // For now, we rely on lazy filtering or manual rebuild.
                 return index;
             }
         }
     }
-    
+
     StorageIndex::default()
 }
 
@@ -160,38 +289,41 @@ pub fn read_index(data_path: &Path) -> StorageIndex {
 pub fn save_index(data_path: &Path, index: &StorageIndex) -> Result<(), String> {
     let index_path = data_path.join("index.json");
     let content = serde_json::to_string_pretty(index).map_err(|e| e.to_string())?;
-    
+
     let tmp_path = index_path.with_extension("json.tmp");
     fs::write(&tmp_path, &content).map_err(|e| e.to_string())?;
     fs::rename(&tmp_path, &index_path).map_err(|e| e.to_string())?;
-    
+
     Ok(())
 }
 
 /// 根据 ID 查找卡片文件路径（遍历所有类型目录）
 fn find_card_path(data_path: &Path, id: &str) -> Option<PathBuf> {
     let filename = format!("{}.json", id);
-    
+
     for type_dir in all_type_dirs() {
         let path = data_path.join("cards").join(type_dir).join(&filename);
         if path.exists() {
             return Some(path);
         }
     }
-    
+
     // 兼容：直接在 cards 目录下查找
     let direct_path = data_path.join("cards").join(&filename);
     if direct_path.exists() {
         return Some(direct_path);
     }
-    
+
     None
 }
 
 /// 构建卡片文件路径
 fn build_card_path(data_path: &Path, id: &str, card_type: &CardType) -> PathBuf {
     let type_dir = get_type_dir(card_type);
-    data_path.join("cards").join(type_dir).join(format!("{}.json", id))
+    data_path
+        .join("cards")
+        .join(type_dir)
+        .join(format!("{}.json", id))
 }
 
 /// 从 JSON 内容中提取 wiki links
@@ -214,7 +346,7 @@ fn extract_links_recursive(node: &JsonValue, links: &mut Vec<String>) {
                 }
             }
         }
-        
+
         if let Some(content) = obj.get("content").and_then(|c| c.as_array()) {
             for child in content {
                 extract_links_recursive(child, links);
@@ -223,19 +355,26 @@ fn extract_links_recursive(node: &JsonValue, links: &mut Vec<String>) {
     }
 }
 
-/// 从 JSON 内容中生成预览文本
-fn generate_preview_from_content(content: &JsonValue, max_length: usize) -> Option<String> {
+/// 从 JSON 内容中提取完整的纯文本（用于搜索索引）
+pub fn extract_plain_text_from_content(content: &JsonValue) -> String {
     let mut text = String::new();
     extract_text_recursive(content, &mut text);
-    
-    let cleaned = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    
-    if cleaned.is_empty() {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// 从 JSON 内容中生成预览文本
+fn generate_preview_from_content(content: &JsonValue, max_length: usize) -> Option<String> {
+    let plain_text = extract_plain_text_from_content(content);
+
+    if plain_text.is_empty() {
         None
-    } else if cleaned.len() > max_length {
-        Some(format!("{}...", cleaned.chars().take(max_length).collect::<String>()))
+    } else if plain_text.len() > max_length {
+        Some(format!(
+            "{}...",
+            plain_text.chars().take(max_length).collect::<String>()
+        ))
     } else {
-        Some(cleaned)
+        Some(plain_text)
     }
 }
 
@@ -244,7 +383,7 @@ fn extract_text_recursive(node: &JsonValue, text: &mut String) {
         if let Some(t) = obj.get("text").and_then(|t| t.as_str()) {
             text.push_str(t);
         }
-        
+
         if let Some(node_type) = obj.get("type").and_then(|t| t.as_str()) {
             if node_type == "wikiLink" {
                 if let Some(attrs) = obj.get("attrs").and_then(|a| a.as_object()) {
@@ -255,13 +394,16 @@ fn extract_text_recursive(node: &JsonValue, text: &mut String) {
                 }
             }
         }
-        
+
         if let Some(content) = obj.get("content").and_then(|c| c.as_array()) {
             for child in content {
                 extract_text_recursive(child, text);
             }
             if let Some(node_type) = obj.get("type").and_then(|t| t.as_str()) {
-                if matches!(node_type, "paragraph" | "heading" | "listItem" | "blockquote") {
+                if matches!(
+                    node_type,
+                    "paragraph" | "heading" | "listItem" | "blockquote"
+                ) {
                     text.push(' ');
                 }
             }
@@ -272,17 +414,67 @@ fn extract_text_recursive(node: &JsonValue, text: &mut String) {
 /// 读取单个卡片
 pub fn read_card(data_path: &Path, id: &str) -> Option<Card> {
     let card_path = find_card_path(data_path, id)?;
-    
-    let content = fs::read_to_string(&card_path).ok()?;
-    let storage: CardStorageV2 = serde_json::from_str(&content).ok()?;
-    
-    let content_str = serde_json::to_string(&storage.content).unwrap_or_default();
+    println!("[DEBUG] read_card: Reading file {:?}", card_path);
+
+    let content = match fs::read_to_string(&card_path) {
+        Ok(c) => {
+            println!(
+                "[DEBUG] read_card: File read success. size={} bytes",
+                c.len()
+            );
+            c
+        }
+        Err(e) => {
+            println!("[ERROR] read_card: Error reading card file {}: {}", id, e);
+            return None;
+        }
+    };
+
+    let storage: CardStorageV2 = match serde_json::from_str::<CardStorageV2>(&content) {
+        Ok(s) => {
+            println!(
+                "[DEBUG] read_card: JSON parse success. id={}, type={:?}",
+                s.id, s.card_type
+            );
+            s
+        }
+        Err(e) => {
+            println!("[ERROR] read_card: Error parsing card file {}: {}", id, e);
+            return None;
+        }
+    };
+
+    // Ensure content is not null or empty string
+    let content_str = if storage.content.is_null() {
+        println!("[WARN] read_card: Content is null for card {}", id);
+        r#"{"type":"doc","content":[{"type":"paragraph"}]}"#.to_string()
+    } else {
+        println!(
+            "[DEBUG] read_card: Content type in JSON: {:?}",
+            storage.content.get("type")
+        );
+        serde_json::to_string(&storage.content).unwrap_or_else(|e| {
+            println!(
+                "[ERROR] read_card: Error serializing card content {}: {}",
+                id, e
+            );
+            r#"{"type":"doc","content":[{"type":"paragraph"}]}"#.to_string()
+        })
+    };
+
+    println!(
+        "[DEBUG] read_card: Final content string length: {}",
+        content_str.len()
+    );
+    // println!("[DEBUG] read_card: Final content preview: {:.100}", content_str);
+
+    let plain_text = extract_plain_text_from_content(&storage.content);
     let preview = generate_preview_from_content(&storage.content, 200);
-    
+
     // 计算相对路径
     let type_dir = get_type_dir(&storage.card_type);
     let path = format!("cards/{}/{}.json", type_dir, storage.id);
-    
+
     Some(Card {
         id: storage.id.clone(),
         path,
@@ -290,6 +482,7 @@ pub fn read_card(data_path: &Path, id: &str) -> Option<Card> {
         tags: storage.tags,
         card_type: storage.card_type,
         content: content_str,
+        plain_text,
         preview,
         created_at: storage.created_at,
         modified_at: storage.updated_at,
@@ -301,27 +494,40 @@ pub fn read_card(data_path: &Path, id: &str) -> Option<Card> {
 
 /// 读取所有卡片列表
 pub fn read_all_cards(data_path: &Path) -> Vec<CardListItem> {
+    println!(
+        "[DEBUG] read_all_cards: Start reading all cards from {:?}",
+        data_path
+    );
     let mut cards = Vec::new();
     let cards_dir = data_path.join("cards");
-    
+
     if !cards_dir.exists() {
+        println!(
+            "[WARN] read_all_cards: Cards directory does not exist {:?}",
+            cards_dir
+        );
         return cards;
     }
-    
+
     let index = read_index(data_path);
-    
+    println!(
+        "[DEBUG] read_all_cards: Index loaded. {} entries",
+        index.cards.len()
+    );
+
     // 遍历所有类型目录
     for type_dir in all_type_dirs() {
         let dir_path = cards_dir.join(type_dir);
         if !dir_path.exists() {
             continue;
         }
-        
+
         for entry in fs::read_dir(&dir_path).into_iter().flatten().flatten() {
             let path = entry.path();
-            
+
             if path.extension().map(|e| e == "json").unwrap_or(false) {
                 if let Some(id) = path.file_stem().and_then(|s| s.to_str()) {
+                    // Try to get from index first
                     if let Some(index_entry) = index.cards.get(id) {
                         let card_path = format!("cards/{}/{}.json", type_dir, id);
                         cards.push(CardListItem {
@@ -330,7 +536,7 @@ pub fn read_all_cards(data_path: &Path) -> Vec<CardListItem> {
                             title: index_entry.title.clone(),
                             tags: index_entry.tags.clone(),
                             card_type: index_entry.card_type.clone(),
-                            preview: None,
+                            preview: index_entry.preview.clone(), // Use preview from index
                             created_at: 0,
                             modified_at: index_entry.updated_at,
                             aliases: vec![],
@@ -338,6 +544,8 @@ pub fn read_all_cards(data_path: &Path) -> Vec<CardListItem> {
                             source_id: index_entry.source_id.clone(),
                         });
                     } else {
+                        // Fallback to reading file
+                        // println!("[DEBUG] read_all_cards: Card {} not in index, reading full file", id);
                         if let Some(card) = read_card(data_path, id) {
                             cards.push(card.into());
                         }
@@ -346,22 +554,32 @@ pub fn read_all_cards(data_path: &Path) -> Vec<CardListItem> {
             }
         }
     }
-    
+
     cards.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
-    
+    println!(
+        "[DEBUG] read_all_cards: Finished. Found {} cards",
+        cards.len()
+    );
+
     cards
 }
 
 /// 创建新卡片
-pub fn create_card(data_path: &Path, card_type: CardType, title: &str, source_id: Option<&str>) -> Result<Card, String> {
+pub fn create_card(
+    data_path: &Path,
+    card_type: CardType,
+    title: &str,
+    source_id: Option<&str>,
+) -> Result<Card, String> {
+    println!("[DEBUG] create_card: title={}, type={:?}", title, card_type);
     let id = generate_id();
     let now = current_timestamp();
-    
+
     let empty_content = serde_json::json!({
         "type": "doc",
         "content": [{ "type": "paragraph" }]
     });
-    
+
     let storage = CardStorageV2 {
         id: id.clone(),
         version: 1,
@@ -375,38 +593,42 @@ pub fn create_card(data_path: &Path, card_type: CardType, title: &str, source_id
         created_at: now,
         updated_at: now,
     };
-    
+
     // 确保目录存在
     let type_dir = get_type_dir(&card_type);
     let dir_path = data_path.join("cards").join(type_dir);
     if !dir_path.exists() {
         fs::create_dir_all(&dir_path).map_err(|e| e.to_string())?;
     }
-    
+
     // 保存卡片文件
     let card_path = build_card_path(data_path, &id, &card_type);
     let content = serde_json::to_string_pretty(&storage).map_err(|e| e.to_string())?;
-    
+
     let tmp_path = card_path.with_extension("json.tmp");
     fs::write(&tmp_path, &content).map_err(|e| e.to_string())?;
     fs::rename(&tmp_path, &card_path).map_err(|e| e.to_string())?;
-    
+
     // 更新索引
     let mut index = read_index(data_path);
-    index.cards.insert(id.clone(), CardIndexEntry {
-        title: title.to_string(),
-        card_type: card_type.clone(),
-        tags: vec![],
-        links: vec![],
-        source_id: source_id.map(String::from),
-        updated_at: now,
-    });
+    index.cards.insert(
+        id.clone(),
+        CardIndexEntry {
+            title: title.to_string(),
+            card_type: card_type.clone(),
+            tags: vec![],
+            links: vec![],
+            source_id: source_id.map(String::from),
+            updated_at: now,
+            preview: None, // Empty card has no preview
+        },
+    );
     index.last_updated = now;
     save_index(data_path, &index)?;
-    
+
     let content_str = serde_json::to_string(&empty_content).unwrap_or_default();
     let path = format!("cards/{}/{}.json", type_dir, id);
-    
+
     Ok(Card {
         id: id.clone(),
         path,
@@ -414,6 +636,7 @@ pub fn create_card(data_path: &Path, card_type: CardType, title: &str, source_id
         tags: vec![],
         card_type,
         content: content_str,
+        plain_text: String::new(), // 新卡片没有内容
         preview: None,
         created_at: now,
         modified_at: now,
@@ -432,25 +655,44 @@ pub fn update_card(
     tags: Option<Vec<String>>,
     card_type: Option<CardType>,
 ) -> Result<(), String> {
-    let old_path = find_card_path(data_path, id)
-        .ok_or_else(|| format!("Card not found: {}", id))?;
-    
+    println!(
+        "[DEBUG] update_card: id={}, has_content={}",
+        id,
+        content.is_some()
+    );
+    let old_path =
+        find_card_path(data_path, id).ok_or_else(|| format!("Card not found: {}", id))?;
+
     // 读取现有卡片
     let file_content = fs::read_to_string(&old_path).map_err(|e| e.to_string())?;
-    let mut storage: CardStorageV2 = serde_json::from_str(&file_content).map_err(|e| e.to_string())?;
-    
+    let mut storage: CardStorageV2 =
+        serde_json::from_str(&file_content).map_err(|e| e.to_string())?;
+
     let old_type = storage.card_type.clone();
-    
+
     // 更新字段
     if let Some(t) = title {
         storage.title = t.to_string();
     }
-    
+
     if let Some(c) = content {
         if let Ok(json_content) = serde_json::from_str::<JsonValue>(c) {
-            storage.content = json_content.clone();
-            storage.links = extract_links_from_content(&json_content);
+            // Prevent storing null as content
+            if json_content.is_null() {
+                println!("[WARN] update_card: Received null content for card {}, using default empty doc", id);
+                storage.content = serde_json::json!({
+                    "type": "doc",
+                    "content": [{ "type": "paragraph" }]
+                });
+            } else {
+                storage.content = json_content.clone();
+            }
+            storage.links = extract_links_from_content(&storage.content);
         } else {
+            println!(
+                "[WARN] update_card: Content for card {} is not valid JSON, treating as text",
+                id
+            );
             storage.content = serde_json::json!({
                 "type": "doc",
                 "content": [{
@@ -461,74 +703,84 @@ pub fn update_card(
             storage.links = vec![];
         }
     }
-    
+
     if let Some(t) = tags {
         storage.tags = t;
     }
-    
+
     if let Some(ct) = card_type {
         storage.card_type = ct;
     }
-    
+
     let now = current_timestamp();
     storage.updated_at = now;
-    
+
     // 如果类型变更，需要移动文件
     let new_path = if storage.card_type != old_type {
         let new_path = build_card_path(data_path, id, &storage.card_type);
-        
+
         // 确保新目录存在
         if let Some(parent) = new_path.parent() {
             if !parent.exists() {
                 fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
         }
-        
+
         Some(new_path)
     } else {
         None
     };
-    
+
     // 保存卡片
     let save_path = new_path.as_ref().unwrap_or(&old_path);
     let new_content = serde_json::to_string_pretty(&storage).map_err(|e| e.to_string())?;
+    println!("[DEBUG] update_card: Saving to {:?}", save_path);
+
     let tmp_path = save_path.with_extension("json.tmp");
     fs::write(&tmp_path, &new_content).map_err(|e| e.to_string())?;
     fs::rename(&tmp_path, save_path).map_err(|e| e.to_string())?;
-    
+
     // 如果移动了文件，删除旧文件
     if new_path.is_some() && old_path.exists() {
         fs::remove_file(&old_path).ok();
     }
-    
+
+    // Update index with preview
+    let preview = generate_preview_from_content(&storage.content, 200);
+
     // 更新索引
     let mut index = read_index(data_path);
-    index.cards.insert(id.to_string(), CardIndexEntry {
-        title: storage.title.clone(),
-        card_type: storage.card_type.clone(),
-        tags: storage.tags.clone(),
-        links: storage.links.clone(),
-        source_id: storage.source_id.clone(),
-        updated_at: now,
-    });
+    index.cards.insert(
+        id.to_string(),
+        CardIndexEntry {
+            title: storage.title.clone(),
+            card_type: storage.card_type.clone(),
+            tags: storage.tags.clone(),
+            links: storage.links.clone(),
+            source_id: storage.source_id.clone(),
+            updated_at: now,
+            preview,
+        },
+    );
     index.last_updated = now;
     save_index(data_path, &index)?;
-    
+
     Ok(())
 }
 
 /// 删除卡片
 pub fn delete_card(data_path: &Path, id: &str) -> Result<(), String> {
+    println!("[DEBUG] delete_card: id={}", id);
     if let Some(card_path) = find_card_path(data_path, id) {
         fs::remove_file(&card_path).map_err(|e| e.to_string())?;
     }
-    
+
     // 更新索引
     let mut index = read_index(data_path);
     index.cards.remove(id);
     index.last_updated = current_timestamp();
     save_index(data_path, &index)?;
-    
+
     Ok(())
 }
 
@@ -540,41 +792,45 @@ pub fn rebuild_index(data_path: &Path) -> Result<StorageIndex, String> {
         last_updated: current_timestamp(),
         cards: HashMap::new(),
     };
-    
+
     let cards_dir = data_path.join("cards");
     if !cards_dir.exists() {
         return Ok(index);
     }
-    
+
     // 遍历所有类型目录
     for type_dir in all_type_dirs() {
         let dir_path = cards_dir.join(type_dir);
         if !dir_path.exists() {
             continue;
         }
-        
+
         for entry in fs::read_dir(&dir_path).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
             let path = entry.path();
-            
+
             if path.extension().map(|e| e == "json").unwrap_or(false) {
                 if let Ok(content) = fs::read_to_string(&path) {
                     if let Ok(storage) = serde_json::from_str::<CardStorageV2>(&content) {
-                        index.cards.insert(storage.id.clone(), CardIndexEntry {
-                            title: storage.title,
-                            card_type: storage.card_type,
-                            tags: storage.tags,
-                            links: storage.links,
-                            source_id: storage.source_id,
-                            updated_at: storage.updated_at,
-                        });
+                        index.cards.insert(
+                            storage.id.clone(),
+                            CardIndexEntry {
+                                title: storage.title,
+                                card_type: storage.card_type,
+                                tags: storage.tags,
+                                links: storage.links,
+                                source_id: storage.source_id,
+                                updated_at: storage.updated_at,
+                                preview: generate_preview_from_content(&storage.content, 200),
+                            },
+                        );
                     }
                 }
             }
         }
     }
-    
+
     save_index(data_path, &index)?;
-    
+
     Ok(index)
 }

@@ -41,6 +41,11 @@ const VIEW_TITLES: Record<string, string> = {
   sources: "文献源",
   graph: "知识图谱",
   kanban: "看板",
+  dashboard: "工作台",
+  library: "书架",
+  review: "回顾",
+  tags: "标签",
+  settings: "设置",
 };
 
 interface UseWindowTitleOptions {

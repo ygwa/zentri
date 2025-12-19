@@ -1,13 +1,14 @@
 //! Card 相关命令
 
-use crate::storage;
 use crate::models::{Card, CardListItem, CardType};
 use crate::state::AppState;
+use crate::storage;
 use tauri::State;
 
 /// 获取所有卡片
 #[tauri::command]
 pub fn get_cards(state: State<AppState>) -> Result<Vec<CardListItem>, String> {
+    println!("[DEBUG] command::get_cards called");
     let vault_path = state
         .vault_path
         .lock()
@@ -15,12 +16,15 @@ pub fn get_cards(state: State<AppState>) -> Result<Vec<CardListItem>, String> {
         .clone()
         .ok_or("Vault path not set")?;
 
-    Ok(storage::read_all_cards(&vault_path))
+    let cards = storage::read_all_cards(&vault_path);
+    println!("[DEBUG] command::get_cards returning {} cards", cards.len());
+    Ok(cards)
 }
 
 /// 获取单个卡片
 #[tauri::command]
 pub fn get_card(state: State<AppState>, id: String) -> Result<Option<Card>, String> {
+    println!("[DEBUG] command::get_card called with id: {}", id);
     let vault_path = state
         .vault_path
         .lock()
@@ -33,7 +37,12 @@ pub fn get_card(state: State<AppState>, id: String) -> Result<Option<Card>, Stri
         return Err("Invalid card ID".to_string());
     }
 
-    Ok(storage::read_card(&vault_path, &id))
+    let card = storage::read_card(&vault_path, &id);
+    println!(
+        "[DEBUG] command::get_card returning {:?}",
+        card.as_ref().map(|c| &c.id)
+    );
+    Ok(card)
 }
 
 /// 获取卡片 by 路径
@@ -47,7 +56,10 @@ pub fn get_card_by_path(state: State<AppState>, path: String) -> Result<Option<C
         .ok_or("Vault path not set")?;
 
     // 从路径提取 ID
-    if let Some(id) = path.strip_prefix("cards/").and_then(|p| p.strip_suffix(".json")) {
+    if let Some(id) = path
+        .strip_prefix("cards/")
+        .and_then(|p| p.strip_suffix(".json"))
+    {
         Ok(storage::read_card(&vault_path, id))
     } else {
         // 尝试直接作为 ID
@@ -74,24 +86,27 @@ pub fn create_card(
 
     // 确保存储目录存在
     storage::ensure_storage_dirs(&vault_path)?;
-    
+
     let card = storage::create_card(&vault_path, ct, &title, source_id.as_deref())?;
-    
+
     // 如果有 source_id，添加到 source 的 note_ids
     if let Some(ref sid) = source_id {
         state.db.add_note_to_source(sid, &card.id).ok();
     }
-    
-    // 更新索引
+
+    // 更新索引 (使用纯文本内容而不是 JSON)
     if let Some(indexer) = state.indexer.lock().unwrap().as_ref() {
-        indexer.index_doc(
-            &card.id,
-            &card.title,
-            &card.content,
-            &card.tags,
-            &card.path,
-            card.modified_at,
-        ).ok();
+        indexer
+            .index_doc_with_type(
+                &card.id,
+                &card.title,
+                &card.plain_text,
+                &card.tags,
+                &card.path,
+                card.modified_at,
+                Some(card.card_type.as_str()),
+            )
+            .ok();
     }
 
     Ok(card)
@@ -121,21 +136,31 @@ pub fn update_card(
     }
 
     let ct = card_type.map(|s| CardType::from_str(&s));
-    storage::update_card(&vault_path, &id, title.as_deref(), content.as_deref(), tags, ct)?;
-    
+    storage::update_card(
+        &vault_path,
+        &id,
+        title.as_deref(),
+        content.as_deref(),
+        tags,
+        ct,
+    )?;
+
     // 读取更新后的卡片
     let card = storage::read_card(&vault_path, &id).ok_or("Card not found after update")?;
-    
-    // 更新索引
+
+    // 更新索引 (使用纯文本内容)
     if let Some(indexer) = state.indexer.lock().unwrap().as_ref() {
-        indexer.index_doc(
-            &card.id,
-            &card.title,
-            &card.content,
-            &card.tags,
-            &card.path,
-            card.modified_at,
-        ).ok();
+        indexer
+            .index_doc_with_type(
+                &card.id,
+                &card.title,
+                &card.plain_text,
+                &card.tags,
+                &card.path,
+                card.modified_at,
+                Some(card.card_type.as_str()),
+            )
+            .ok();
     }
 
     Ok(card)
@@ -157,7 +182,7 @@ pub fn delete_card(state: State<AppState>, id: String) -> Result<(), String> {
     }
 
     storage::delete_card(&vault_path, &id)?;
-    
+
     // 更新索引
     if let Some(indexer) = state.indexer.lock().unwrap().as_ref() {
         indexer.delete_doc(&id).ok();

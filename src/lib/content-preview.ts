@@ -7,6 +7,42 @@ import React from "react";
 import type { EditorContent, EditorNode } from "@/types";
 
 /**
+ * 检查卡片是否有实际内容（不只是空段落或空白）
+ * @param content 卡片内容
+ * @returns 如果有实际内容返回 true，否则返回 false
+ */
+export function hasCardContent(content: EditorContent | string | null | undefined): boolean {
+  if (!content) return false;
+
+  // 如果是 JSON 格式
+  if (typeof content === "object" && content.type === "doc") {
+    const text = extractTextFromNodes(content.content || []);
+    return text.trim().length > 0;
+  }
+
+  // 旧的字符串格式处理
+  if (typeof content !== "string") return false;
+  
+  const htmlContent = content;
+  if (htmlContent.trim() === "") return false;
+
+  // 移除 HTML 标签后检查是否有文本
+  const text = htmlContent
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return text.length > 0;
+}
+
+/**
  * 从编辑器内容中提取纯文本预览
  * 支持 JSON 格式和旧的 HTML/Markdown 字符串格式
  */
