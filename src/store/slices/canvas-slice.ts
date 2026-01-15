@@ -83,6 +83,7 @@ export const createCanvasSlice: StateCreator<CanvasSlice> = (set, get) => ({
       const listItem: CanvasListItem = {
         id: mockCanvas.id,
         title: mockCanvas.title,
+        createdAt: mockCanvas.createdAt,
         updatedAt: mockCanvas.updatedAt,
       };
       set((state) => ({
@@ -96,6 +97,7 @@ export const createCanvasSlice: StateCreator<CanvasSlice> = (set, get) => ({
     const listItem: CanvasListItem = {
       id: canvas.id,
       title: canvas.title,
+      createdAt: canvas.createdAt,
       updatedAt: canvas.updatedAt,
     };
     set((state) => ({
@@ -111,11 +113,7 @@ export const createCanvasSlice: StateCreator<CanvasSlice> = (set, get) => ({
       if (get().currentCanvas?.id === id) {
         set((state) => ({
           currentCanvas: state.currentCanvas
-            ? {
-                ...state.currentCanvas,
-                ...updates,
-                updatedAt: Date.now(),
-              }
+            ? { ...state.currentCanvas, ...updates, updatedAt: Date.now() } as any
             : null,
         }));
       }
@@ -136,10 +134,11 @@ export const createCanvasSlice: StateCreator<CanvasSlice> = (set, get) => ({
         canvases: state.canvases.map((c) =>
           c.id === id
             ? {
-                id: canvas.id,
-                title: canvas.title,
-                updatedAt: canvas.updatedAt,
-              }
+              id: canvas.id,
+              title: canvas.title,
+              createdAt: canvas.createdAt,
+              updatedAt: canvas.updatedAt,
+            }
             : c
         ),
         currentCanvas: canvas,
@@ -173,5 +172,8 @@ export const createCanvasSlice: StateCreator<CanvasSlice> = (set, get) => ({
   // Computed
   getCanvasById: (id) => get().canvases.find((canvas) => canvas.id === id),
 });
+
+
+
 
 

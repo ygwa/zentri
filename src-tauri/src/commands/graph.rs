@@ -3,21 +3,16 @@
 
 use crate::graph::{self, BacklinkInfo, CardImportance, GraphData, KnowledgeCluster};
 use crate::state::AppState;
-use crate::storage;
 use tauri::State;
 
 /// 获取完整图谱数据 (包含布局)
 #[tauri::command]
-pub fn get_graph_data(state: State<AppState>) -> Result<GraphData, String> {
-    let vault_path = state
-        .vault_path
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("Vault path not set")?;
-
-    let cards = storage::read_all_cards(&vault_path);
-    Ok(graph::compute_layout(cards))
+pub async fn get_graph_data(state: State<'_, AppState>) -> Result<GraphData, String> {
+    let services = state.get_services().ok_or("Vault not initialized")?;
+    let cards = services.card.get_all().await.map_err(|e| e.to_string())?;
+    // 转换为 CardListItem（graph 模块需要的格式）
+    let card_list: Vec<_> = cards.into_iter().map(|c| c.into()).collect();
+    Ok(graph::compute_layout(card_list))
 }
 
 /// 获取指定卡片的反向链接
@@ -77,7 +72,7 @@ pub fn get_orphan_nodes(state: State<AppState>) -> Result<Vec<String>, String> {
 
 /// 重建图谱索引
 #[tauri::command]
-pub fn rebuild_graph(state: State<AppState>) -> Result<(), String> {
+pub async fn rebuild_graph(state: State<'_, AppState>) -> Result<(), String> {
     let graph_engine = state
         .graph_engine
         .lock()
@@ -85,6 +80,11 @@ pub fn rebuild_graph(state: State<AppState>) -> Result<(), String> {
         .clone()
         .ok_or("Graph engine not initialized")?;
 
-    graph_engine.rebuild();
+    // 从数据库获取所有卡片
+    let services = state.get_services().ok_or("Vault not initialized")?;
+    let cards = services.card.get_all().await.map_err(|e| e.to_string())?;
+    let card_list: Vec<_> = cards.into_iter().map(|c| c.into()).collect();
+    
+    graph_engine.rebuild_with_cards(card_list);
     Ok(())
 }

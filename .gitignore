@@ -28,3 +28,7 @@ docs
 .playwright/*
 .playwright-mcp/*
 .pnpm-store/*
+
+# Sidecar binaries (可选：如果文件太大，可以忽略)
+# src-tauri/binaries/llama-server-*
+# src-tauri/binaries/*.exe

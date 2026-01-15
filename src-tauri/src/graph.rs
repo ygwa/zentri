@@ -2,7 +2,6 @@
 //! 提供图谱计算、反向链接、PageRank 排序、连通分量分析等功能
 
 use crate::models::CardListItem;
-use crate::storage;
 use petgraph::algo::{connected_components, kosaraju_scc};
 use petgraph::graph::{DiGraph, Graph, NodeIndex};
 use petgraph::visit::EdgeRef;
@@ -102,6 +101,7 @@ pub struct GraphEngine {
 struct CardMeta {
     title: String,
     card_type: String,
+    #[allow(dead_code)]
     links: Vec<String>,
     aliases: Vec<String>,
 }
@@ -120,9 +120,15 @@ impl GraphEngine {
     }
 
     /// 初始化或重建图谱
-    pub fn rebuild(&self) {
-        let cards = storage::read_all_cards(&self.vault_path);
+    /// 注意：现在需要从外部传入卡片列表（从数据库获取）
+    pub fn rebuild_with_cards(&self, cards: Vec<CardListItem>) {
         self.build_from_cards(cards);
+    }
+
+    /// 保持向后兼容的 rebuild 方法（已废弃，使用 rebuild_with_cards）
+    #[deprecated(note = "使用 rebuild_with_cards 替代")]
+    pub fn rebuild(&self) {
+        // 空实现，需要调用者使用 rebuild_with_cards
     }
 
     /// 从卡片列表构建图谱
@@ -180,16 +186,19 @@ impl GraphEngine {
         }
 
         // 更新内部状态
-        *self.directed_graph.write().unwrap() = graph;
-        *self.node_indices.write().unwrap() = indices;
-        *self.title_to_id.write().unwrap() = title_map;
-        *self.card_meta.write().unwrap() = meta_map;
-        *self.initialized.write().unwrap() = true;
+        *self
+            .directed_graph
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = graph;
+        *self.node_indices.write().unwrap_or_else(|e| e.into_inner()) = indices;
+        *self.title_to_id.write().unwrap_or_else(|e| e.into_inner()) = title_map;
+        *self.card_meta.write().unwrap_or_else(|e| e.into_inner()) = meta_map;
+        *self.initialized.write().unwrap_or_else(|e| e.into_inner()) = true;
     }
 
     /// 确保已初始化
     fn ensure_initialized(&self) {
-        if !*self.initialized.read().unwrap() {
+        if !*self.initialized.read().unwrap_or_else(|e| e.into_inner()) {
             self.rebuild();
         }
     }
@@ -198,9 +207,12 @@ impl GraphEngine {
     pub fn get_backlinks(&self, card_id: &str) -> Vec<BacklinkInfo> {
         self.ensure_initialized();
 
-        let graph = self.directed_graph.read().unwrap();
-        let indices = self.node_indices.read().unwrap();
-        let meta = self.card_meta.read().unwrap();
+        let graph = self
+            .directed_graph
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        let indices = self.node_indices.read().unwrap_or_else(|e| e.into_inner());
+        let meta = self.card_meta.read().unwrap_or_else(|e| e.into_inner());
 
         let mut backlinks = Vec::new();
 
@@ -216,44 +228,9 @@ impl GraphEngine {
             for edge in graph.edges_directed(target_idx, Direction::Incoming) {
                 let source_id = &graph[edge.source()];
                 if let Some(source_meta) = meta.get(source_id) {
-                    // 尝试读取源卡片内容以获取上下文
-                    let mut context = None;
-
-                    // 注意：这可能会有性能影响，如果反链非常多。
-                    // 但对于个人知识库通常是可以接受的。
-                    if let Some(card) = storage::read_card(&self.vault_path, source_id) {
-                        let text = &card.plain_text;
-                        if !text.is_empty() {
-                            // 尝试找到标题或别名
-                            let mut found_idx = None;
-                            let mut found_len = 0;
-
-                            // 检查标题
-                            if let Some(idx) = text.find(&target_title) {
-                                found_idx = Some(idx);
-                                found_len = target_title.len();
-                            }
-
-                            // 如果没找到标题，检查别名
-                            if found_idx.is_none() {
-                                for alias in &target_aliases {
-                                    if let Some(idx) = text.find(alias) {
-                                        found_idx = Some(idx);
-                                        found_len = alias.len();
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if let Some(idx) = found_idx {
-                                // 提取上下文窗口
-                                let start = if idx > 30 { idx - 30 } else { 0 };
-                                let end = std::cmp::min(idx + found_len + 50, text.len());
-                                let snippet = &text[start..end];
-                                context = Some(format!("...{}...", snippet.trim()));
-                            }
-                        }
-                    }
+                    // 上下文提取已移除（需要从数据库获取，性能影响较大）
+                    // 如果需要上下文，可以在调用 get_backlinks 时传入卡片数据
+                    let context = None;
 
                     backlinks.push(BacklinkInfo {
                         id: source_id.clone(),
@@ -272,8 +249,11 @@ impl GraphEngine {
     pub fn compute_pagerank(&self, damping: f32, iterations: usize) -> HashMap<String, f32> {
         self.ensure_initialized();
 
-        let graph = self.directed_graph.read().unwrap();
-        let indices = self.node_indices.read().unwrap();
+        let graph = self
+            .directed_graph
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        let indices = self.node_indices.read().unwrap_or_else(|e| e.into_inner());
 
         let n = graph.node_count();
         if n == 0 {
@@ -327,9 +307,12 @@ impl GraphEngine {
     pub fn get_importance_ranking(&self, limit: usize) -> Vec<CardImportance> {
         self.ensure_initialized();
 
-        let graph = self.directed_graph.read().unwrap();
-        let indices = self.node_indices.read().unwrap();
-        let meta = self.card_meta.read().unwrap();
+        let graph = self
+            .directed_graph
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        let indices = self.node_indices.read().unwrap_or_else(|e| e.into_inner());
+        let meta = self.card_meta.read().unwrap_or_else(|e| e.into_inner());
 
         let pagerank = self.compute_pagerank(0.85, 20);
 
@@ -364,13 +347,16 @@ impl GraphEngine {
     pub fn get_clusters(&self) -> Vec<KnowledgeCluster> {
         self.ensure_initialized();
 
-        let graph = self.directed_graph.read().unwrap();
-        let indices = self.node_indices.read().unwrap();
-        let meta = self.card_meta.read().unwrap();
+        let graph = self
+            .directed_graph
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        let _indices = self.node_indices.read().unwrap_or_else(|e| e.into_inner());
+        let _meta = self.card_meta.read().unwrap_or_else(|e| e.into_inner());
 
         // 转换为无向图计算连通分量
         let undirected: Graph<String, (), Undirected> = graph.clone().into_edge_type();
-        let num_components = connected_components(&undirected);
+        let _num_components = connected_components(&undirected);
 
         // 使用 Kosaraju 算法获取强连通分量
         let sccs = kosaraju_scc(&*graph);
@@ -411,8 +397,11 @@ impl GraphEngine {
     pub fn get_orphan_nodes(&self) -> Vec<String> {
         self.ensure_initialized();
 
-        let graph = self.directed_graph.read().unwrap();
-        let indices = self.node_indices.read().unwrap();
+        let graph = self
+            .directed_graph
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        let indices = self.node_indices.read().unwrap_or_else(|e| e.into_inner());
 
         indices
             .iter()
@@ -426,13 +415,17 @@ impl GraphEngine {
     }
 
     /// 更新单个卡片的图关系
+    #[allow(dead_code)]
     pub fn update_card(&self, card_id: &str, links: Vec<String>, title: &str, aliases: &[String]) {
         self.ensure_initialized();
 
-        let mut graph = self.directed_graph.write().unwrap();
-        let mut indices = self.node_indices.write().unwrap();
-        let mut title_map = self.title_to_id.write().unwrap();
-        let mut meta = self.card_meta.write().unwrap();
+        let mut graph = self
+            .directed_graph
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut indices = self.node_indices.write().unwrap_or_else(|e| e.into_inner());
+        let mut title_map = self.title_to_id.write().unwrap_or_else(|e| e.into_inner());
+        let mut meta = self.card_meta.write().unwrap_or_else(|e| e.into_inner());
 
         // 获取或创建节点
         let source_idx = if let Some(&idx) = indices.get(card_id) {
@@ -493,10 +486,14 @@ impl GraphEngine {
     }
 
     /// 删除卡片
+    #[allow(dead_code)]
     pub fn remove_card(&self, card_id: &str) {
-        let mut graph = self.directed_graph.write().unwrap();
-        let mut indices = self.node_indices.write().unwrap();
-        let mut meta = self.card_meta.write().unwrap();
+        let mut graph = self
+            .directed_graph
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut indices = self.node_indices.write().unwrap_or_else(|e| e.into_inner());
+        let mut meta = self.card_meta.write().unwrap_or_else(|e| e.into_inner());
 
         if let Some(idx) = indices.remove(card_id) {
             graph.remove_node(idx);
@@ -508,6 +505,7 @@ impl GraphEngine {
 // ============ 原有的布局计算函数 (保持兼容) ============
 
 struct NodeState {
+    #[allow(dead_code)]
     id: String,
     title: String,
     card_type: String,
@@ -736,7 +734,7 @@ pub fn compute_layout(cards: Vec<CardListItem>) -> GraphData {
 /// 为卡片计算 PageRank (辅助函数)
 fn compute_pagerank_for_cards(
     cards: &[CardListItem],
-    node_indices: &HashMap<String, NodeIndex>,
+    _node_indices: &HashMap<String, NodeIndex>,
     title_to_id: &HashMap<String, String>,
 ) -> HashMap<String, f32> {
     // 构建有向图

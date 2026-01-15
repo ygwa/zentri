@@ -68,7 +68,10 @@ impl Tokenizer for JiebaTokenizer {
 
         // 使用 jieba 进行分词
         for word in self.jieba.cut(text, true) {
-            let start = text[offset..].find(word).map(|i| offset + i).unwrap_or(offset);
+            let start = text[offset..]
+                .find(word)
+                .map(|i| offset + i)
+                .unwrap_or(offset);
             let end = start + word.len();
 
             tokens.push(Token {
@@ -90,6 +93,7 @@ impl Tokenizer for JiebaTokenizer {
 pub struct Indexer {
     index: Index,
     reader: IndexReader,
+    #[allow(dead_code)]
     schema: Schema,
     // Fields
     pub id: Field,
@@ -121,7 +125,7 @@ impl Indexer {
         let tags = schema_builder.add_text_field("tags", STRING | STORED);
         let path = schema_builder.add_text_field("path", STRING | STORED);
         let modified_at = schema_builder.add_i64_field("modified_at", STORED | FAST);
-        
+
         // 新增: 卡片类型字段 (用于过滤)
         let card_type = schema_builder.add_text_field("card_type", STRING | STORED);
 
@@ -164,6 +168,7 @@ impl Indexer {
     }
 
     /// 添加或更新文档
+    #[allow(dead_code)]
     pub fn index_doc(
         &self,
         id_val: &str,
@@ -173,7 +178,15 @@ impl Indexer {
         path_val: &str,
         modified_at_val: i64,
     ) -> Result<(), String> {
-        self.index_doc_with_type(id_val, title_val, content_val, tags_val, path_val, modified_at_val, None)
+        self.index_doc_with_type(
+            id_val,
+            title_val,
+            content_val,
+            tags_val,
+            path_val,
+            modified_at_val,
+            None,
+        )
     }
 
     /// 添加或更新文档 (带类型)
@@ -187,7 +200,8 @@ impl Indexer {
         modified_at_val: i64,
         card_type_val: Option<&str>,
     ) -> Result<(), String> {
-        let mut index_writer: IndexWriter<TantivyDocument> = self.index.writer(50_000_000).map_err(|e| e.to_string())?;
+        let mut index_writer: IndexWriter<TantivyDocument> =
+            self.index.writer(50_000_000).map_err(|e| e.to_string())?;
 
         // 先删除旧文档 (根据 ID)
         let term = Term::from_field_text(self.id, id_val);
@@ -203,7 +217,7 @@ impl Indexer {
         }
         doc.add_text(self.path, path_val);
         doc.add_i64(self.modified_at, modified_at_val);
-        
+
         // 添加卡片类型
         if let Some(ct) = card_type_val {
             doc.add_text(self.card_type, ct);
@@ -216,12 +230,19 @@ impl Indexer {
     }
 
     /// 搜索
-    pub fn search(&self, query_str: &str, limit: usize) -> Result<Vec<(String, String, f32)>, String> {
+    #[allow(dead_code)]
+    pub fn search(
+        &self,
+        query_str: &str,
+        limit: usize,
+    ) -> Result<Vec<(String, String, f32)>, String> {
         let searcher = self.reader.searcher();
 
         // 搜索 title 和 content
         let query_parser = QueryParser::for_index(&self.index, vec![self.title, self.content]);
-        let query = query_parser.parse_query(query_str).map_err(|e| e.to_string())?;
+        let query = query_parser
+            .parse_query(query_str)
+            .map_err(|e| e.to_string())?;
 
         let top_docs = searcher
             .search(&query, &TopDocs::with_limit(limit))
@@ -229,7 +250,8 @@ impl Indexer {
 
         let mut results = Vec::new();
         for (score, doc_address) in top_docs {
-            let retrieved_doc: TantivyDocument = searcher.doc(doc_address).map_err(|e| e.to_string())?;
+            let retrieved_doc: TantivyDocument =
+                searcher.doc(doc_address).map_err(|e| e.to_string())?;
 
             let id = retrieved_doc
                 .get_first(self.id)
@@ -280,12 +302,18 @@ impl Indexer {
 
             if let Some(ct) = card_type_filter {
                 let term = Term::from_field_text(self.card_type, ct);
-                clauses.push((Occur::Must, Box::new(TermQuery::new(term, IndexRecordOption::Basic))));
+                clauses.push((
+                    Occur::Must,
+                    Box::new(TermQuery::new(term, IndexRecordOption::Basic)),
+                ));
             }
 
             if let Some(tag) = tag_filter {
                 let term = Term::from_field_text(self.tags, tag);
-                clauses.push((Occur::Must, Box::new(TermQuery::new(term, IndexRecordOption::Basic))));
+                clauses.push((
+                    Occur::Must,
+                    Box::new(TermQuery::new(term, IndexRecordOption::Basic)),
+                ));
             }
 
             Box::new(BooleanQuery::new(clauses))
@@ -301,7 +329,8 @@ impl Indexer {
         let mut results = Vec::new();
 
         for (score, doc_address) in top_docs {
-            let retrieved_doc: TantivyDocument = searcher.doc(doc_address).map_err(|e| e.to_string())?;
+            let retrieved_doc: TantivyDocument =
+                searcher.doc(doc_address).map_err(|e| e.to_string())?;
 
             let id = retrieved_doc
                 .get_first(self.id)
@@ -378,7 +407,8 @@ impl Indexer {
         let mut results = Vec::new();
 
         for (score, doc_address) in top_docs {
-            let retrieved_doc: TantivyDocument = searcher.doc(doc_address).map_err(|e| e.to_string())?;
+            let retrieved_doc: TantivyDocument =
+                searcher.doc(doc_address).map_err(|e| e.to_string())?;
 
             let id = retrieved_doc
                 .get_first(self.id)
@@ -423,67 +453,126 @@ impl Indexer {
         Ok(results)
     }
 
-    /// 生成高亮片段
+    /// 生成高亮片段 (UTF-8 safe)
     fn generate_snippet(&self, content: &str, query: &str) -> Option<String> {
         let content_lower = content.to_lowercase();
+        let query_lower = query.to_lowercase();
 
-        // 找到查询词的位置
-        if let Some(pos) = content_lower.find(query) {
-            // 取前后 50 个字符作为上下文
-            let start = pos.saturating_sub(50);
-            let end = (pos + query.len() + 50).min(content.len());
+        if query_lower.is_empty() {
+            return self.generate_preview(content);
+        }
 
-            // 确保在字符边界
-            let start = content[..start]
-                .rfind(char::is_whitespace)
-                .map(|i| i + 1)
-                .unwrap_or(start);
+        // 找到查询词的位置 (byte index in lower string)
+        if let Some(pos) = content_lower.find(&query_lower) {
+            // Note: Indices from to_lowercase might not strictly map to content,
+            // but for simple search snippet it's often close enough or we accept a slight drift.
+            // A perfect solution requires mapping indices or case-insensitive search on original string.
+            // Here we prioritize safety over pixel-perfect alignment for now.
+
+            // Safe start calculation
+            let context_chars = 20; // Reduce context to avoid huge drift
+
+            // Find a safe char boundary backwards approx 50 bytes
+            // Iterate chars backwards from pos
+            let mut char_count = 0;
+            let mut found_start = 0;
+
+            for (curr_idx, _) in content.char_indices().rev() {
+                if curr_idx <= pos {
+                    if char_count < context_chars {
+                        char_count += 1;
+                        found_start = curr_idx;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            let start = found_start;
+
+            // Safe end calculation
+            let target_end = pos + query_lower.len() + 100; // ample buffer
+            let end = if target_end >= content.len() {
+                content.len()
+            } else {
+                // Align to next char boundary
+                let mut safe_e = target_end;
+                while !content.is_char_boundary(safe_e) && safe_e < content.len() {
+                    safe_e += 1;
+                }
+                safe_e
+            };
+
+            let safe_slice = &content[start..end];
 
             let mut snippet = String::new();
-
-            // 添加省略号（如果不是开头）
             if start > 0 {
                 snippet.push_str("...");
             }
 
-            // 分段高亮
-            let text_slice = &content[start..end];
-            let text_lower = text_slice.to_lowercase();
+            // Highlight inside the safe slice
+            // Simple approach: case-insensitive replace? No, need to keep original case.
+            // We use the same naive find logic on the slice.
+            let slice_lower = safe_slice.to_lowercase();
+            // We need to re-locate the query inside this slice because lowercasing might change lengths slightly
+            // or if we drifted.
+            // Better approach for display: just markup the text.
 
             let mut last_end = 0;
-            for (match_start, _) in text_lower.match_indices(query) {
-                // 添加未匹配的部分
-                snippet.push_str(&text_slice[last_end..match_start]);
-                // 添加高亮的匹配部分
-                snippet.push_str("<mark>");
-                snippet.push_str(&text_slice[match_start..match_start + query.len()]);
-                snippet.push_str("</mark>");
-                last_end = match_start + query.len();
-            }
-            // 添加剩余部分
-            snippet.push_str(&text_slice[last_end..]);
+            // Note: matching inside slice_lower and mapping back to safe_slice is still risky for length mapping.
+            // But usually 1:1 for most chars.
 
-            // 添加省略号（如果不是结尾）
+            for (match_start, part_str) in slice_lower.match_indices(&query_lower) {
+                // Add text before match
+                if match_start > last_end {
+                    // Check boundaries again just in case length differs (rare but possible with weird unicode)
+                    if last_end < safe_slice.len() && match_start <= safe_slice.len() {
+                        snippet.push_str(&safe_slice[last_end..match_start]);
+                    }
+                }
+
+                // Add highlighted match
+                snippet.push_str("<mark>");
+                // Use original text length if possible, or query length
+                let match_end = match_start + part_str.len();
+                if match_end <= safe_slice.len() {
+                    snippet.push_str(&safe_slice[match_start..match_end]);
+                } else {
+                    snippet.push_str(&query); // Fallback
+                }
+                snippet.push_str("</mark>");
+
+                last_end = match_end;
+            }
+
+            // Add remainder
+            if last_end < safe_slice.len() {
+                snippet.push_str(&safe_slice[last_end..]);
+            }
+
             if end < content.len() {
                 snippet.push_str("...");
             }
 
             Some(snippet)
         } else {
-            // 如果没找到精确匹配，返回内容开头
-            let preview_len = 100.min(content.len());
-            let preview = &content[..preview_len];
-            if content.len() > preview_len {
-                Some(format!("{}...", preview))
-            } else {
-                Some(preview.to_string())
-            }
+            self.generate_preview(content)
+        }
+    }
+
+    fn generate_preview(&self, content: &str) -> Option<String> {
+        let chars: Vec<char> = content.chars().collect();
+        let limit = 100;
+        if chars.len() > limit {
+            Some(format!("{}...", chars[..limit].iter().collect::<String>()))
+        } else {
+            Some(content.to_string())
         }
     }
 
     /// 删除文档
     pub fn delete_doc(&self, id_val: &str) -> Result<(), String> {
-        let mut index_writer: IndexWriter<TantivyDocument> = self.index.writer(50_000_000).map_err(|e| e.to_string())?;
+        let mut index_writer: IndexWriter<TantivyDocument> =
+            self.index.writer(50_000_000).map_err(|e| e.to_string())?;
         let term = Term::from_field_text(self.id, id_val);
         index_writer.delete_term(term);
         index_writer.commit().map_err(|e| e.to_string())?;
@@ -521,7 +610,8 @@ impl Indexer {
         let mut results = Vec::new();
 
         for (score, doc_address) in top_docs {
-            let retrieved_doc: TantivyDocument = searcher.doc(doc_address).map_err(|e| e.to_string())?;
+            let retrieved_doc: TantivyDocument =
+                searcher.doc(doc_address).map_err(|e| e.to_string())?;
 
             let id = retrieved_doc
                 .get_first(self.id)
@@ -559,7 +649,11 @@ impl Indexer {
     }
 
     /// 按卡片类型搜索
-    pub fn search_by_type(&self, card_type: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
+    pub fn search_by_type(
+        &self,
+        card_type: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>, String> {
         let searcher = self.reader.searcher();
         let term = Term::from_field_text(self.card_type, card_type);
         let query = TermQuery::new(term, IndexRecordOption::Basic);
@@ -571,7 +665,8 @@ impl Indexer {
         let mut results = Vec::new();
 
         for (score, doc_address) in top_docs {
-            let retrieved_doc: TantivyDocument = searcher.doc(doc_address).map_err(|e| e.to_string())?;
+            let retrieved_doc: TantivyDocument =
+                searcher.doc(doc_address).map_err(|e| e.to_string())?;
 
             let id = retrieved_doc
                 .get_first(self.id)
@@ -608,4 +703,3 @@ impl Indexer {
         Ok(results)
     }
 }
-

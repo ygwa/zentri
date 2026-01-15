@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import * as pdfjsLib from "pdfjs-dist";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   ChevronLeft,
   ChevronRight,
@@ -9,37 +7,53 @@ import {
   ZoomOut,
   Highlighter,
   Plus,
-  RotateCw,
+  List,
   GripVertical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getFileUrl } from "@/lib/file-url";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import type { Highlight, PdfRect } from "@/types";
+import type { Highlight, AnnotationType, PdfRect } from "@/types";
 import { HighlightColorPicker, HIGHLIGHT_COLORS } from "./highlight-color-picker";
-import { FontSelector, FONT_OPTIONS } from "./font-selector";
+import { HighlightContextMenu } from "./highlight-context-menu";
+import { BookmarkPanel } from "./bookmark-panel";
+import { ShortcutsHelp } from "./shortcuts-help";
 
-// 设置 worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+import * as pdfjsLib from "pdfjs-dist";
+
+// 设置 PDF.js worker（延迟初始化，在组件挂载时设置）
+let workerInitialized = false;
+
+function initializePdfWorker() {
+  if (workerInitialized || typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    // 检查 GlobalWorkerOptions 是否存在
+    if (pdfjsLib.GlobalWorkerOptions) {
+      // 使用 public 目录中的 worker 文件
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
+      workerInitialized = true;
+    }
+  } catch (err) {
+    console.error("Failed to initialize PDF.js worker:", err);
+  }
+}
 
 interface PdfReaderProps {
   url: string;
   sourceId?: string;
   sourceTitle?: string;
   highlights?: Highlight[];
-  onHighlight?: (text: string, page: number, rects: PdfRect[]) => void;
-  onAddToNote?: (text: string, page: number, rects: PdfRect[]) => void;
+  onHighlight?: (text: string, position: number, type?: AnnotationType, rects?: Array<{ x: number; y: number; width: number; height: number }>) => void;
+  onAddToNote?: (text: string, position: number) => void;
   onProgress?: (progress: number) => void;
-  onColorChange?: (color: string) => void;
-  onPageChange?: (page: number, totalPages: number) => void; // 页码变化回调
-  initialPage?: number; // 初始页码
+  onPageChange?: (page: number, totalPages: number) => void;
+  currentPage?: number;
+  onHighlightUpdate?: (id: string, updates: { note?: string; color?: string }) => void;
+  onHighlightDelete?: (id: string) => void;
+  onBookmarkAdd?: (position: number) => void;
   className?: string;
-}
-
-interface TextSelection {
-  text: string;
-  page: number;
-  rects: DOMRect[];
 }
 
 export function PdfReader({
@@ -50,364 +64,470 @@ export function PdfReader({
   onHighlight,
   onAddToNote,
   onProgress,
-  onColorChange,
   onPageChange,
-  initialPage,
+  currentPage,
+  onHighlightUpdate,
+  onHighlightDelete,
+  onBookmarkAdd,
   className,
 }: PdfReaderProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map());
-  const textLayerRefs = useRef<Map<number, HTMLDivElement>>(new Map());
-  const highlightLayerRefs = useRef<Map<number, HTMLDivElement>>(new Map());
-  
-  const [pdf, setPdf] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayRef = useRef<SVGSVGElement>(null);
+  const pdfDocRef = useRef<any>(null);
+  const pageNumRef = useRef(1);
+  const scaleRef = useRef(1.5);
+  const initializingRef = useRef(false);
+  const currentUrlRef = useRef<string | null>(null);
+
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(initialPage || 1);
-  const [totalPages, setTotalPages] = useState(0);
-  
-  // 监听 initialPage 变化，实现外部控制翻页
-  const prevInitialPageRef = useRef(initialPage);
-  useEffect(() => {
-    if (initialPage && initialPage !== prevInitialPageRef.current && initialPage >= 1 && initialPage <= totalPages && initialPage !== currentPage) {
-      prevInitialPageRef.current = initialPage;
-      const newPage = Math.max(1, Math.min(totalPages, initialPage));
-      setCurrentPage(newPage);
-      setPageInput(String(newPage));
-      
-      // 立即通知父组件页码变化
-      if (onPageChange && totalPages > 0) {
-        onPageChange(newPage, totalPages);
-      }
-      
-      // 立即更新进度显示
-      if (totalPages > 0) {
-        const progress = Math.round((newPage / totalPages) * 100);
-        onProgress?.(progress);
-      }
-    } else if (initialPage) {
-      prevInitialPageRef.current = initialPage;
-    }
-  }, [initialPage, totalPages, currentPage, onPageChange, onProgress]);
-  const [scale, setScale] = useState(1.2);
-  const [selectedText, setSelectedText] = useState<TextSelection | null>(null);
-  const [renderedPages, setRenderedPages] = useState<Set<number>>(new Set());
-  const [pageInput, setPageInput] = useState("1");
+  const [pageNum, setPageNum] = useState(1);
+  const [numPages, setNumPages] = useState(0);
+  const [selectedText, setSelectedText] = useState<{
+    text: string;
+    page: number;
+    rects: PdfRect[];
+    position?: { x: number; y: number };
+  } | null>(null);
+  const [showToc, setShowToc] = useState(false);
+  const [showBookmarks, setShowBookmarks] = useState(false);
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+  const [outline, setOutline] = useState<any[]>([]);
   const [selectedHighlightColor, setSelectedHighlightColor] = useState<string>(
     HIGHLIGHT_COLORS[0].color
   );
-  const [fontFamily, setFontFamily] = useState<string>(FONT_OPTIONS[0].fontFamily);
-  const progressUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [selectedAnnotationType, setSelectedAnnotationType] = useState<AnnotationType>("highlight");
+  const [selectedHighlight, setSelectedHighlight] = useState<{
+    highlight: Highlight;
+    position: { x: number; y: number };
+  } | null>(null);
 
-  // 加载 PDF
+  const onProgressRef = useRef(onProgress);
+  onProgressRef.current = onProgress;
+
+  // 防抖的进度保存
+  const progressTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const debouncedProgressSave = useCallback((progressValue: number) => {
+    if (progressTimeoutRef.current) {
+      clearTimeout(progressTimeoutRef.current);
+    }
+    progressTimeoutRef.current = setTimeout(() => {
+      if (onProgressRef.current) {
+        onProgressRef.current(progressValue);
+      }
+    }, 500);
+  }, []);
+
+  // 监听 currentPage 变化
+  const prevCurrentPageRef = useRef(currentPage);
   useEffect(() => {
-    if (!url) return;
+    if (currentPage !== undefined && currentPage !== prevCurrentPageRef.current && pdfDocRef.current) {
+      // 验证进度值范围
+      if (currentPage < 0 || currentPage > 100) {
+        console.warn(`Invalid progress value: ${currentPage}, must be 0-100`);
+        return;
+      }
 
-    const loadPdf = async () => {
+      prevCurrentPageRef.current = currentPage;
+      if (numPages > 0) {
+        const targetPage = Math.max(1, Math.min(numPages, Math.ceil((currentPage / 100) * numPages)));
+        if (targetPage !== pageNum) {
+          pageNumRef.current = targetPage;
+          setPageNum(targetPage);
+          renderPage(targetPage);
+        }
+      }
+    }
+  }, [currentPage, numPages, pageNum, renderPage]);
+
+  // 渲染页面
+  const renderPage = useCallback(async (pageNumber: number) => {
+    if (!pdfDocRef.current || !canvasRef.current || !overlayRef.current) return;
+
+    try {
+      const pdfDoc = pdfDocRef.current;
+      const page = await pdfDoc.getPage(pageNumber);
+      const canvas = canvasRef.current;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+
+      const viewport = page.getViewport({ scale: scaleRef.current });
+      canvas.height = viewport.height;
+      canvas.width = viewport.width;
+
+      // 渲染 PDF 页面
+      const renderContext = {
+        canvasContext: context,
+        viewport: viewport,
+      };
+      await page.render(renderContext).promise;
+
+      // 更新 overlay 尺寸
+      overlayRef.current.setAttribute("width", viewport.width.toString());
+      overlayRef.current.setAttribute("height", viewport.height.toString());
+
+      // 渲染高亮
+      renderHighlights(pageNumber, viewport);
+
+      // 更新进度
+      const progress = Math.round((pageNumber / numPages) * 100);
+      debouncedProgressSave(progress);
+      if (onPageChange) {
+        onPageChange(progress, 100);
+      }
+    } catch (err) {
+      console.error("Failed to render page:", err);
+    }
+  }, [numPages, debouncedProgressSave, onPageChange]);
+
+  // 渲染高亮
+  const renderHighlights = useCallback((pageNumber: number, viewport: any) => {
+    if (!overlayRef.current) return;
+
+    const svg = overlayRef.current;
+    // 清空现有高亮
+    svg.innerHTML = "";
+
+    // 渲染该页面的高亮（带验证和错误处理）
+    let failedHighlights = 0;
+    highlights.forEach((h) => {
+      if (h.position?.page === pageNumber) {
+        if (h.position.rects && h.position.rects.length > 0) {
+          // 有完整的 rects 数据，可以正确渲染
+          h.position.rects.forEach((rect) => {
+            // 验证 rect 数据有效性
+            if (
+              typeof rect.x !== 'number' || typeof rect.y !== 'number' ||
+              typeof rect.width !== 'number' || typeof rect.height !== 'number' ||
+              rect.x < 0 || rect.x > 1 || rect.y < 0 || rect.y > 1 ||
+              rect.width <= 0 || rect.width > 1 || rect.height <= 0 || rect.height > 1
+            ) {
+              console.warn(`Invalid rect data for highlight ${h.id}:`, rect);
+              failedHighlights++;
+              return;
+            }
+
+            const rectElement = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            rectElement.setAttribute("x", (rect.x * viewport.width).toString());
+            rectElement.setAttribute("y", (rect.y * viewport.height).toString());
+            rectElement.setAttribute("width", (rect.width * viewport.width).toString());
+            rectElement.setAttribute("height", (rect.height * viewport.height).toString());
+            
+            if (h.type === "underline") {
+              rectElement.setAttribute("fill", "none");
+              rectElement.setAttribute("stroke", h.color || selectedHighlightColor);
+              rectElement.setAttribute("stroke-width", "2");
+              rectElement.setAttribute("stroke-dasharray", "none");
+            } else {
+              rectElement.setAttribute("fill", h.color || selectedHighlightColor);
+              rectElement.setAttribute("fill-opacity", "0.4");
+            }
+            
+            rectElement.setAttribute("data-highlight-id", h.id);
+            rectElement.style.cursor = "pointer";
+            rectElement.addEventListener("click", (e) => {
+              e.stopPropagation();
+              const rect = rectElement.getBoundingClientRect();
+              const containerRect = containerRef.current?.getBoundingClientRect();
+              if (containerRect) {
+                setSelectedHighlight({
+                  highlight: h,
+                  position: {
+                    x: rect.left - containerRect.left + rect.width / 2,
+                    y: rect.top - containerRect.top,
+                  },
+                });
+              }
+            });
+            
+            svg.appendChild(rectElement);
+          });
+        } else {
+          // 缺少 rects 数据，无法正确渲染
+          failedHighlights++;
+          console.warn(`Highlight ${h.id} missing rects data - cannot restore on page ${pageNumber}`);
+        }
+      }
+    });
+
+    // 如果有高亮恢复失败，记录但不显示错误（避免干扰用户体验）
+    if (failedHighlights > 0) {
+      console.warn(`${failedHighlights} highlight(s) could not be restored on page ${pageNumber}`);
+    }
+  }, [highlights, selectedHighlightColor]);
+
+  // 初始化阅读器
+  useEffect(() => {
+    if (!containerRef.current || !url) return;
+
+    if (initializingRef.current || currentUrlRef.current === url) {
+      return;
+    }
+
+    // 初始化 PDF.js worker
+    initializePdfWorker();
+
+    let isMounted = true;
+    initializingRef.current = true;
+    currentUrlRef.current = url;
+
+    const initReader = async () => {
       try {
         setIsLoading(true);
         setError(null);
 
-        // 转换本地文件路径为可访问的 URL
-        const fileUrl = await getFileUrl(url);
-        console.log("Loading PDF from:", fileUrl);
+        // 加载文件
+        let fileOrUrl: string | ArrayBuffer | Uint8Array;
+        const isRelativePath = url &&
+          !url.startsWith("http") &&
+          !url.startsWith("asset://") &&
+          !url.startsWith("file://") &&
+          !url.startsWith("/") &&
+          !url.startsWith("tauri://") &&
+          !url.startsWith("blob:");
 
-        const loadingTask = pdfjsLib.getDocument(fileUrl);
+        if (isRelativePath) {
+          // 相对路径，使用 Rust 后端读取文件
+          try {
+            const { invoke } = await import("@tauri-apps/api/core");
+            const fileData = await invoke<number[]>("read_book_file", { relativePath: url });
+            fileOrUrl = new Uint8Array(fileData);
+          } catch (err) {
+            console.error("Failed to read file from Rust backend:", err);
+            throw new Error(`Failed to load PDF file: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        } else {
+          // 绝对路径或 URL
+          const fileUrl = await getFileUrl(url);
+          fileOrUrl = fileUrl;
+        }
+
+        // 加载 PDF 文档
+        const loadingTask = pdfjsLib.getDocument(fileOrUrl);
         const pdfDoc = await loadingTask.promise;
-        
-        setPdf(pdfDoc);
-        const total = pdfDoc.numPages;
-        setTotalPages(total);
-        
-        // 计算初始进度
-        const initialPageNum = initialPage || 1;
-        const initialProgress = total > 0 ? Math.round((initialPageNum / total) * 100) : 0;
-        
-        // 设置当前页码
-        setCurrentPage(initialPageNum);
-        setPageInput(String(initialPageNum));
-        
-        // 通知父组件总页数和初始页码
-        if (onPageChange && total > 0) {
-          onPageChange(initialPageNum, total);
-        }
-        
-        // 通知父组件初始进度（立即调用，不防抖）
-        if (onProgress && total > 0) {
-          onProgress(initialProgress);
-        }
-        
+        pdfDocRef.current = pdfDoc;
+
+        if (!isMounted || !containerRef.current) return;
+
+        const totalPages = pdfDoc.numPages;
+        setNumPages(totalPages);
+        pageNumRef.current = currentPage ? Math.ceil((currentPage / 100) * totalPages) : 1;
+        setPageNum(pageNumRef.current);
+
+        // 获取目录
+        const pdfOutline = await pdfDoc.getOutline();
+        setOutline(pdfOutline || []);
+
+        // 渲染第一页
+        await renderPage(pageNumRef.current);
+
         setIsLoading(false);
+        initializingRef.current = false;
       } catch (err) {
         console.error("Failed to load PDF:", err);
-        setError("无法加载 PDF 文件");
-        setIsLoading(false);
+        if (isMounted) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          // 确保错误消息对用户友好
+          setError(errorMessage || "无法加载 PDF 文件");
+          setIsLoading(false);
+        }
+        initializingRef.current = false;
       }
     };
 
-    loadPdf();
-  }, [url]);
+    initReader();
 
-  // 渲染单页
-  const renderPage = useCallback(async (pageNum: number) => {
-    if (!pdf || renderedPages.has(pageNum)) return;
-
-    try {
-      const page = await pdf.getPage(pageNum);
-      const viewport = page.getViewport({ scale });
-
-      // 获取或创建 canvas
-      let canvas = canvasRefs.current.get(pageNum);
-      if (!canvas) {
-        canvas = document.createElement("canvas");
-        canvasRefs.current.set(pageNum, canvas);
-      }
-
-      const context = canvas.getContext("2d");
-      if (!context) return;
-
-      canvas.height = viewport.height;
-      canvas.width = viewport.width;
-
-      // 渲染 PDF 页面到 canvas
-      await page.render({
-        canvasContext: context,
-        viewport: viewport,
-        canvas: canvas,
-      }).promise;
-
-      // 渲染文本层
-      const textContent = await page.getTextContent();
-      const textLayerDiv = textLayerRefs.current.get(pageNum);
-      
-      if (textLayerDiv) {
-        textLayerDiv.innerHTML = "";
-        textLayerDiv.style.width = `${viewport.width}px`;
-        textLayerDiv.style.height = `${viewport.height}px`;
-
-        // 创建文本层
-        textContent.items.forEach((item) => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const textItem = item as any;
-          if (textItem.str) {
-            const tx = pdfjsLib.Util.transform(
-              viewport.transform,
-              textItem.transform
-            );
-
-            const span = document.createElement("span");
-            span.textContent = textItem.str;
-            span.style.position = "absolute";
-            span.style.left = `${tx[4]}px`;
-            span.style.top = `${tx[5] - (textItem.height || 12)}px`;
-            span.style.fontSize = `${textItem.height || 12}px`;
-            // 使用用户选择的字体，但保留原始字体作为后备
-            span.style.fontFamily = `${fontFamily}, ${textItem.fontName || "sans-serif"}`;
-            span.style.color = "transparent";
-            span.style.whiteSpace = "pre";
-            
-            textLayerDiv.appendChild(span);
-          }
-        });
-      }
-
-      setRenderedPages((prev) => new Set([...prev, pageNum]));
-    } catch (err) {
-      console.error(`Failed to render page ${pageNum}:`, err);
-    }
-  }, [pdf, scale, renderedPages]);
-
-  // 渲染可见页面
-  useEffect(() => {
-    if (!pdf) return;
-
-    // 当字体改变时，清除已渲染页面以重新渲染
-    if (fontFamily) {
-      setRenderedPages(new Set());
-    }
-
-    // 渲染当前页和前后各一页
-    const pagesToRender = [currentPage - 1, currentPage, currentPage + 1].filter(
-      (p) => p >= 1 && p <= totalPages
-    );
-
-    pagesToRender.forEach((page) => {
-      renderPage(page);
-    });
-  }, [pdf, currentPage, totalPages, renderPage, fontFamily]);
-
-  // 处理文本选择
-  const handleTextSelection = useCallback(() => {
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) {
-      setSelectedText(null);
-      return;
-    }
-
-    const text = selection.toString().trim();
-    if (!text) {
-      setSelectedText(null);
-      return;
-    }
-
-    // 获取选择区域
-    const range = selection.getRangeAt(0);
-    const rects = Array.from(range.getClientRects());
-
-    setSelectedText({
-      text,
-      page: currentPage,
-      rects,
-    });
-  }, [currentPage]);
-
-  // 监听文本选择
-  useEffect(() => {
-    document.addEventListener("mouseup", handleTextSelection);
-    return () => document.removeEventListener("mouseup", handleTextSelection);
-  }, [handleTextSelection]);
-
-  // 翻页（带防抖的进度更新）
-  const goToPage = useCallback((page: number) => {
-    const newPage = Math.max(1, Math.min(totalPages, page));
-    setCurrentPage(newPage);
-    setPageInput(String(newPage));
-    
-    // 立即通知父组件页码变化
-    if (onPageChange && totalPages > 0) {
-      onPageChange(newPage, totalPages);
-    }
-    
-    // 立即更新进度显示（不防抖）
-    if (totalPages > 0) {
-      const progress = Math.round((newPage / totalPages) * 100);
-      // 立即调用进度回调（UI更新）
-      if (onProgress) {
-        onProgress(progress);
-      }
-    }
-  }, [totalPages, onProgress, onPageChange]);
-  
-  // 清理防抖定时器
-  useEffect(() => {
     return () => {
-      if (progressUpdateTimeoutRef.current) {
-        clearTimeout(progressUpdateTimeoutRef.current);
+      isMounted = false;
+      pdfDocRef.current = null;
+      currentUrlRef.current = null;
+      initializingRef.current = false;
+
+      if (progressTimeoutRef.current) {
+        clearTimeout(progressTimeoutRef.current);
       }
     };
-  }, []);
+  }, [url, renderPage, currentPage]);
 
+  // 当高亮变化时重新渲染
+  useEffect(() => {
+    if (pdfDocRef.current && !isLoading) {
+      renderPage(pageNum);
+    }
+  }, [highlights, pageNum, renderPage, isLoading]);
+
+  // 翻页
   const goNext = useCallback(() => {
-    goToPage(currentPage + 1);
-  }, [currentPage, goToPage]);
+    if (pageNum < numPages) {
+      const nextPage = pageNum + 1;
+      pageNumRef.current = nextPage;
+      setPageNum(nextPage);
+      renderPage(nextPage);
+    }
+  }, [pageNum, numPages, renderPage]);
 
   const goPrev = useCallback(() => {
-    goToPage(currentPage - 1);
-  }, [currentPage, goToPage]);
-
-  // 处理页码输入
-  const handlePageInput = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      const page = parseInt(pageInput, 10);
-      if (!isNaN(page)) {
-        goToPage(page);
-      }
+    if (pageNum > 1) {
+      const prevPage = pageNum - 1;
+      pageNumRef.current = prevPage;
+      setPageNum(prevPage);
+      renderPage(prevPage);
     }
-  };
+  }, [pageNum, renderPage]);
 
   // 缩放
   const zoomIn = useCallback(() => {
-    setScale((s) => Math.min(3, s + 0.2));
-    setRenderedPages(new Set()); // 重新渲染
-  }, []);
+    scaleRef.current = Math.min(3, scaleRef.current + 0.25);
+    renderPage(pageNum);
+  }, [pageNum, renderPage]);
 
   const zoomOut = useCallback(() => {
-    setScale((s) => Math.max(0.5, s - 0.2));
-    setRenderedPages(new Set());
-  }, []);
+    scaleRef.current = Math.max(0.5, scaleRef.current - 0.25);
+    renderPage(pageNum);
+  }, [pageNum, renderPage]);
 
-  // 将 DOMRect 转换为 PdfRect（相对于页面容器的坐标）
-  const domRectsToPageRects = useCallback((rects: DOMRect[], pageNum: number): PdfRect[] => {
-    const canvas = canvasRefs.current.get(pageNum);
-    if (!canvas) return [];
-    
-    const canvasRect = canvas.getBoundingClientRect();
-    return rects.map(rect => ({
-      x: (rect.left - canvasRect.left) / scale,
-      y: (rect.top - canvasRect.top) / scale,
-      width: rect.width / scale,
-      height: rect.height / scale,
-    }));
-  }, [scale]);
+  // 跳转到目录项
+  const goToOutline = useCallback(
+    async (dest: any) => {
+      if (!pdfDocRef.current) return;
+      try {
+        setShowToc(false);
+        const destArray = await pdfDocRef.current.getDestination(dest);
+        const pageIndex = await pdfDocRef.current.getPageIndex(destArray[0]);
+        const targetPage = pageIndex + 1;
+        pageNumRef.current = targetPage;
+        setPageNum(targetPage);
+        renderPage(targetPage);
+      } catch (err) {
+        console.error("Failed to navigate to outline item:", err);
+      }
+    },
+    [renderPage]
+  );
 
-  // 高亮选中文本
-  const highlightSelected = useCallback(() => {
-    if (!selectedText) return;
-    const pdfRects = domRectsToPageRects(selectedText.rects, selectedText.page);
-    onHighlight?.(selectedText.text, selectedText.page, pdfRects);
-    window.getSelection()?.removeAllRanges();
-    setSelectedText(null);
-  }, [selectedText, onHighlight, domRectsToPageRects]);
-  
+  // 处理文本选择
+  const handleTextSelection = useCallback(async () => {
+    if (!pdfDocRef.current || !canvasRef.current) return;
 
-  // 渲染高亮层
-  const renderHighlightsForPage = useCallback((pageNum: number) => {
-    const highlightLayer = highlightLayerRefs.current.get(pageNum);
-    const canvas = canvasRefs.current.get(pageNum);
-    if (!highlightLayer || !canvas) return;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      setSelectedText(null);
+      return;
+    }
 
-    // 清空现有高亮
-    highlightLayer.innerHTML = "";
+    const selectedTextStr = selection.toString().trim();
+    if (!selectedTextStr) {
+      setSelectedText(null);
+      return;
+    }
 
-    // 找到该页的高亮
-    const pageHighlights = highlights.filter(h => h.position?.page === pageNum);
-    
-    pageHighlights.forEach(h => {
-      if (h.position?.rects) {
-        h.position.rects.forEach(rect => {
-          const highlightDiv = document.createElement("div");
-          highlightDiv.className = "pdf-highlight";
-          highlightDiv.style.position = "absolute";
-          highlightDiv.style.left = `${rect.x * scale}px`;
-          highlightDiv.style.top = `${rect.y * scale}px`;
-          highlightDiv.style.width = `${rect.width * scale}px`;
-          highlightDiv.style.height = `${rect.height * scale}px`;
-          highlightDiv.style.backgroundColor = h.color || "rgba(255, 235, 59, 0.4)";
-          highlightDiv.style.pointerEvents = "none";
-          highlightDiv.style.mixBlendMode = "multiply";
-          highlightDiv.title = h.content;
-          highlightLayer.appendChild(highlightDiv);
+    try {
+      const page = await pdfDocRef.current.getPage(pageNum);
+      await page.getTextContent();
+      const viewport = page.getViewport({ scale: scaleRef.current });
+
+      // 获取选中文本的边界框
+      const rects: PdfRect[] = [];
+      const range = selection.getRangeAt(0);
+      const containerRect = containerRef.current?.getBoundingClientRect();
+
+      // 简化处理：使用选择范围的边界框
+      const rangeRect = range.getBoundingClientRect();
+      if (containerRect) {
+        const x = (rangeRect.left - containerRect.left) / viewport.width;
+        const y = (rangeRect.top - containerRect.top) / viewport.height;
+        const width = rangeRect.width / viewport.width;
+        const height = rangeRect.height / viewport.height;
+
+        rects.push({ x, y, width, height });
+
+        let position: { x: number; y: number } | undefined;
+        position = {
+          x: rangeRect.left - containerRect.left + rangeRect.width / 2,
+          y: rangeRect.top - containerRect.top,
+        };
+
+        setSelectedText({
+          text: selectedTextStr,
+          page: pageNum,
+          rects,
+          position,
         });
       }
-    });
-  }, [highlights, scale]);
+    } catch (err) {
+      console.error("Failed to process text selection:", err);
+    }
+  }, [pageNum]);
 
-  // 当高亮或页面变化时重新渲染高亮层
+  // 监听文本选择
   useEffect(() => {
-    if (!pdf) return;
-    
-    const pagesToRender = [currentPage - 1, currentPage, currentPage + 1].filter(
-      (p) => p >= 1 && p <= totalPages
-    );
-    
-    pagesToRender.forEach(pageNum => {
-      renderHighlightsForPage(pageNum);
-    });
-  }, [highlights, currentPage, totalPages, pdf, renderHighlightsForPage]);
+    document.addEventListener("selectionchange", handleTextSelection);
+    return () => {
+      document.removeEventListener("selectionchange", handleTextSelection);
+    };
+  }, [handleTextSelection]);
+
+  // 高亮选中文本
+  const highlightSelected = useCallback(
+    async (_color?: string, type?: AnnotationType) => {
+      if (!selectedText || !pdfDocRef.current) return;
+
+      const annotationType = type || selectedAnnotationType;
+
+      // 传递完整的 PDF 位置数据，包括页码和矩形坐标
+      // rects 已经归一化到 0-1 范围，确保在不同缩放级别下都能正确显示
+      if (selectedText.rects && selectedText.rects.length > 0) {
+        onHighlight?.(selectedText.text, selectedText.page, annotationType, selectedText.rects);
+      } else {
+        // 如果没有 rects，仍然创建高亮但记录警告
+        console.warn('PDF highlight created without rects - restoration may fail');
+        onHighlight?.(selectedText.text, selectedText.page, annotationType);
+      }
+      setSelectedText(null);
+    },
+    [selectedText, onHighlight, selectedHighlightColor, selectedAnnotationType]
+  );
 
   // 键盘导航
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === "INPUT" ||
+          (e.target as HTMLElement)?.tagName === "TEXTAREA") {
+        return;
+      }
+
       if (e.key === "ArrowRight" || e.key === "PageDown") {
+        e.preventDefault();
         goNext();
       } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
+        e.preventDefault();
         goPrev();
+      } else if ((e.key === "b" || e.key === "B") && !e.shiftKey) {
+        if (sourceId && onBookmarkAdd) {
+          e.preventDefault();
+          onBookmarkAdd(pageNum);
+        }
+      } else if (e.key === "t" || e.key === "T") {
+        e.preventDefault();
+        setShowToc(prev => !prev);
+      } else if ((e.key === "b" || e.key === "B") && e.shiftKey) {
+        e.preventDefault();
+        setShowBookmarks(prev => !prev);
+      } else if (e.key === "?") {
+        e.preventDefault();
+        setShowShortcutsHelp(true);
+      } else if (e.key === "Escape") {
+        setShowToc(false);
+        setShowBookmarks(false);
+        setShowShortcutsHelp(false);
+        setSelectedHighlight(null);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [goNext, goPrev]);
+  }, [goNext, goPrev, sourceId, pageNum, onBookmarkAdd]);
 
   if (error) {
     return (
@@ -419,14 +539,6 @@ export function PdfReader({
     );
   }
 
-  const progress = totalPages > 0 ? Math.round((currentPage / totalPages) * 100) : 0;
-  
-  // 暴露 goToPage 方法给父组件（通过 ref）
-  useEffect(() => {
-    // 这个方法可以通过 ref 暴露，但目前我们通过 onPageChange 回调来同步
-    // 如果需要，可以添加 useImperativeHandle
-  }, []);
-
   return (
     <div className={cn("flex flex-col h-full relative", className)}>
       {/* 工具栏 */}
@@ -436,42 +548,10 @@ export function PdfReader({
             variant="ghost"
             size="icon"
             className="h-7 w-7"
-            onClick={goPrev}
-            disabled={currentPage <= 1}
+            onClick={() => setShowToc(!showToc)}
           >
-            <ChevronLeft className="h-4 w-4" />
+            <List className="h-4 w-4" />
           </Button>
-          <div className="flex items-center gap-1">
-            <Input
-              value={pageInput}
-              onChange={(e) => setPageInput(e.target.value)}
-              onKeyDown={handlePageInput}
-              className="h-6 w-12 text-xs text-center"
-            />
-            <span className="text-xs text-muted-foreground">/ {totalPages}</span>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={goNext}
-            disabled={currentPage >= totalPages}
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-        </div>
-
-        <div className="flex items-center gap-1">
-          <FontSelector
-            selectedFont={fontFamily}
-            onFontSelect={(fontFamily) => {
-              setFontFamily(fontFamily);
-              // PDF 的文本层是透明的，主要用于文本选择
-              // 实际显示的文本是在 canvas 上渲染的，无法改变字体
-              // 这里改变的是文本选择时的字体显示
-              setRenderedPages(new Set()); // 重新渲染以应用字体
-            }}
-          />
           <Button
             variant="ghost"
             size="icon"
@@ -480,8 +560,8 @@ export function PdfReader({
           >
             <ZoomOut className="h-4 w-4" />
           </Button>
-          <span className="text-xs text-muted-foreground w-12 text-center">
-            {Math.round(scale * 100)}%
+          <span className="text-xs text-muted-foreground w-10 text-center">
+            {Math.round(scaleRef.current * 100)}%
           </span>
           <Button
             variant="ghost"
@@ -491,201 +571,200 @@ export function PdfReader({
           >
             <ZoomIn className="h-4 w-4" />
           </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => {
-              setScale(1.2);
-              setRenderedPages(new Set());
-            }}
-          >
-            <RotateCw className="h-4 w-4" />
-          </Button>
         </div>
-
-        <div className="text-xs text-muted-foreground">{progress}%</div>
+        <div className="text-xs text-muted-foreground">
+          {pageNum} / {numPages}
+        </div>
       </div>
 
-      {/* PDF 显示区域 */}
-      <ScrollArea className="flex-1 relative">
-        {/* 半透明翻页按钮 - 不遮挡内容 */}
+      {/* 目录面板 */}
+      {showToc && (
+        <div className="absolute top-10 left-0 bottom-0 w-64 bg-background border-r z-10 overflow-auto">
+          <div className="p-3 border-b font-medium text-sm">目录</div>
+          <div className="p-2">
+            {outline.map((item, i) => (
+              <button
+                key={i}
+                onClick={() => goToOutline(item.dest)}
+                className="w-full text-left px-2 py-1.5 text-sm hover:bg-muted rounded truncate"
+              >
+                {item.title}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 书签面板 */}
+      {showBookmarks && sourceId && (
+        <div className="absolute top-10 right-0 bottom-0 w-64 bg-background border-l z-10">
+          <BookmarkPanel
+            sourceId={sourceId}
+            onNavigate={(position) => {
+              const targetPage = parseInt(position);
+              if (!isNaN(targetPage)) {
+                pageNumRef.current = targetPage;
+                setPageNum(targetPage);
+                renderPage(targetPage);
+              }
+            }}
+          />
+        </div>
+      )}
+
+      {/* 阅读区域 */}
+      <div className="flex-1 relative overflow-auto" ref={containerRef}>
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-background z-50">
+            <div className="text-sm text-muted-foreground">加载中...</div>
+          </div>
+        )}
+        <div className="relative inline-block">
+          <canvas ref={canvasRef} className="block" />
+          <svg
+            ref={overlayRef}
+            className="absolute top-0 left-0 pointer-events-none"
+            style={{ pointerEvents: "auto" }}
+          />
+        </div>
+
+        {/* 翻页按钮 */}
         <button
           onClick={goPrev}
-          disabled={currentPage <= 1}
-          className="absolute left-4 top-1/2 -translate-y-1/2 z-40 w-12 h-20 flex items-center justify-center bg-black/20 hover:bg-black/40 backdrop-blur-sm rounded-lg transition-all opacity-0 hover:opacity-100 group disabled:opacity-0 disabled:cursor-not-allowed"
+          className="absolute left-4 top-1/2 -translate-y-1/2 z-40 w-12 h-20 flex items-center justify-center bg-black/20 hover:bg-black/40 backdrop-blur-sm rounded-lg transition-all opacity-0 hover:opacity-100 group"
           aria-label="上一页"
         >
           <ChevronLeft className="h-6 w-6 text-white group-hover:scale-110 transition-transform" />
         </button>
         <button
           onClick={goNext}
-          disabled={currentPage >= totalPages}
-          className="absolute right-4 top-1/2 -translate-y-1/2 z-40 w-12 h-20 flex items-center justify-center bg-black/20 hover:bg-black/40 backdrop-blur-sm rounded-lg transition-all opacity-0 hover:opacity-100 group disabled:opacity-0 disabled:cursor-not-allowed"
+          className="absolute right-4 top-1/2 -translate-y-1/2 z-40 w-12 h-20 flex items-center justify-center bg-black/20 hover:bg-black/40 backdrop-blur-sm rounded-lg transition-all opacity-0 hover:opacity-100 group"
           aria-label="下一页"
         >
           <ChevronRight className="h-6 w-6 text-white group-hover:scale-110 transition-transform" />
         </button>
-        
-        <div
-          ref={containerRef}
-          className="flex flex-col items-center py-4 gap-4 min-h-full bg-muted/20"
-        >
-          {isLoading ? (
-            <div className="flex items-center justify-center h-64">
-              <div className="text-sm text-muted-foreground">加载中...</div>
-            </div>
-          ) : (
-            Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
-              <div
-                key={pageNum}
-                className="relative shadow-lg bg-white"
-                style={{ display: Math.abs(pageNum - currentPage) <= 2 ? "block" : "none" }}
-              >
-                <canvas
-                  ref={(el) => {
-                    if (el) canvasRefs.current.set(pageNum, el);
-                  }}
-                />
-                {/* 高亮层 - 在 canvas 上方，文本层下方 */}
-                <div
-                  ref={(el) => {
-                    if (el) highlightLayerRefs.current.set(pageNum, el);
-                  }}
-                  className="absolute top-0 left-0 pointer-events-none"
-                />
-                {/* 文本层 - 最上层用于选择 */}
-                <div
-                  ref={(el) => {
-                    if (el) textLayerRefs.current.set(pageNum, el);
-                  }}
-                  className="absolute top-0 left-0 select-text"
-                  style={{ userSelect: "text" }}
-                />
-                <div className="absolute bottom-2 right-2 text-xs text-muted-foreground bg-white/80 px-2 py-0.5 rounded">
-                  {pageNum}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </ScrollArea>
+      </div>
 
-      {/* 选中文本工具栏 - 跟随选中位置（参考微信读书样式） */}
-      {selectedText && (() => {
-        // 计算弹出框位置 - 基于选中区域，智能定位避免遮挡
-        const containerRect = containerRef.current?.getBoundingClientRect();
-        let popupStyle: React.CSSProperties = {
-          bottom: '64px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-        };
-        
-        if (selectedText.rects.length > 0 && containerRect) {
-          const firstRect = selectedText.rects[0];
-          const relativeX = firstRect.left - containerRect.left + firstRect.width / 2;
-          const relativeY = firstRect.top - containerRect.top;
-          
-          // 智能定位：优先显示在选中文本上方，如果上方空间不足则显示在下方
-          const popupHeight = 60; // 估算工具栏高度
-          const spaceAbove = relativeY;
-          
-          if (spaceAbove > popupHeight + 20) {
-            // 显示在上方
-            popupStyle = {
-              left: `${Math.max(150, Math.min(relativeX, containerRect.width - 150))}px`,
-              top: `${Math.max(10, relativeY - popupHeight - 10)}px`,
-              transform: 'translateX(-50%)',
-            };
-          } else {
-            // 显示在下方
-            popupStyle = {
-              left: `${Math.max(150, Math.min(relativeX, containerRect.width - 150))}px`,
-              top: `${Math.min(containerRect.height - popupHeight - 10, relativeY + firstRect.height + 10)}px`,
-              transform: 'translateX(-50%)',
-            };
+      {/* 选中文本工具栏 */}
+      {selectedText && (
+        <div
+          className="absolute bg-popover border rounded-lg shadow-xl p-2.5 flex items-center gap-2 z-50 backdrop-blur-sm animate-in fade-in-0 zoom-in-95 duration-200"
+          style={
+            selectedText.position
+              ? (() => {
+                  const containerWidth = containerRef.current?.offsetWidth || 400;
+                  const popupHeight = 60;
+
+                  return {
+                    left: `${Math.max(150, Math.min(selectedText.position.x, containerWidth - 150))}px`,
+                    top: `${Math.max(10, selectedText.position.y - popupHeight - 10)}px`,
+                    transform: "translateX(-50%)",
+                  };
+                })()
+              : {
+                  bottom: "80px",
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                }
           }
-        }
-        
-        return (
-          <div 
-            className="absolute bg-popover border rounded-lg shadow-xl p-2.5 flex items-center gap-2 z-50 backdrop-blur-sm animate-in fade-in-0 zoom-in-95 duration-200"
-            style={popupStyle}
-          >
-            <div 
-              className="cursor-grab hover:bg-muted p-1.5 rounded active:cursor-grabbing transition-colors"
-              draggable
-              onDragStart={(e) => {
-                if (sourceId) {
-                  e.dataTransfer.setData("application/x-zentri-reference", JSON.stringify({
+        >
+          <div
+            className="cursor-grab hover:bg-blue-50 hover:border-blue-200 border border-transparent p-1.5 rounded active:cursor-grabbing transition-all flex items-center gap-1.5 group/drag"
+            draggable
+            onDragStart={(e) => {
+              if (sourceId) {
+                e.dataTransfer.setData(
+                  "application/x-zentri-reference",
+                  JSON.stringify({
                     sourceId,
                     sourceTitle: sourceTitle || "PDF",
                     text: selectedText.text,
                     page: selectedText.page,
                     type: "pdf",
-                  }));
-                  e.dataTransfer.effectAllowed = "copy";
-                }
-              }}
-              title="拖拽到编辑器以创建引用"
-            >
-              <GripVertical className="h-4 w-4 text-muted-foreground" />
-            </div>
-            
-            {/* 颜色选择器 */}
-            <div className="px-1 border-l border-r border-border">
-              <HighlightColorPicker
-                selectedColor={selectedHighlightColor}
-                onColorSelect={(color) => {
-                  setSelectedHighlightColor(color);
-                  onColorChange?.(color); // 通知父组件颜色改变
-                  // 点击颜色后立即应用高亮
-                  const pdfRects = domRectsToPageRects(selectedText.rects, selectedText.page);
-                  onHighlight?.(selectedText.text, selectedText.page, pdfRects);
-                  window.getSelection()?.removeAllRanges();
-                  setSelectedText(null);
-                }}
-              />
-            </div>
-            
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 text-xs gap-1.5 px-3"
-              onClick={() => {
-                const pdfRects = domRectsToPageRects(selectedText.rects, selectedText.page);
-                onHighlight?.(selectedText.text, selectedText.page, pdfRects);
-                window.getSelection()?.removeAllRanges();
-                setSelectedText(null);
-              }}
-            >
-              <Highlighter className="h-3.5 w-3.5" style={{ color: selectedHighlightColor }} />
-              高亮
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 text-xs gap-1.5 px-3"
-              onClick={() => {
-                const pdfRects = domRectsToPageRects(selectedText.rects, selectedText.page);
-                highlightSelected();
-                onAddToNote?.(selectedText.text, selectedText.page, pdfRects);
-              }}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              笔记
-            </Button>
+                  })
+                );
+                e.dataTransfer.effectAllowed = "copy";
+              }
+            }}
+            title="拖拽到编辑器以创建引用"
+          >
+            <GripVertical className="h-4 w-4 text-blue-600 group-hover/drag:text-blue-700" />
+            <span className="text-[10px] font-medium text-blue-600 group-hover/drag:text-blue-700 hidden sm:inline">拖拽</span>
           </div>
-        );
-      })()}
+
+          <div className="px-1 border-l border-r border-border">
+            <HighlightColorPicker
+              selectedColor={selectedHighlightColor}
+              selectedType={selectedAnnotationType}
+              onColorSelect={(color) => {
+                setSelectedHighlightColor(color);
+              }}
+              onTypeSelect={(type) => {
+                setSelectedAnnotationType(type);
+              }}
+              showTypeSelector={true}
+            />
+          </div>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs gap-1.5 px-3"
+            onClick={() => highlightSelected()}
+          >
+            <Highlighter className="h-3.5 w-3.5" style={{ color: selectedHighlightColor }} />
+            高亮
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs gap-1.5 px-3"
+            onClick={() => {
+              highlightSelected();
+              onAddToNote?.(selectedText.text, selectedText.page);
+            }}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            笔记
+          </Button>
+        </div>
+      )}
+
+      {/* 高亮上下文菜单 */}
+      {selectedHighlight && (
+        <HighlightContextMenu
+          highlight={selectedHighlight.highlight}
+          position={selectedHighlight.position}
+          onEdit={(id, note) => {
+            onHighlightUpdate?.(id, { note });
+            setSelectedHighlight(null);
+          }}
+          onDelete={(id) => {
+            onHighlightDelete?.(id);
+            renderPage(pageNum);
+            setSelectedHighlight(null);
+          }}
+          onColorChange={(id, color) => {
+            onHighlightUpdate?.(id, { color });
+            renderPage(pageNum);
+          }}
+          onClose={() => setSelectedHighlight(null)}
+        />
+      )}
+
+      {/* 快捷键帮助 */}
+      {showShortcutsHelp && (
+        <ShortcutsHelp onClose={() => setShowShortcutsHelp(false)} />
+      )}
 
       {/* 进度条 */}
       <div className="h-1 bg-muted">
         <div
           className="h-full bg-primary transition-all"
-          style={{ width: `${progress}%` }}
+          style={{ width: `${Math.round((pageNum / numPages) * 100)}%` }}
         />
       </div>
     </div>
   );
 }
+

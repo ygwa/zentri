@@ -13,6 +13,7 @@ pub enum WebReaderError {
     #[error("HTML 解析失败: {0}")]
     ParseError(String),
     #[error("无法提取正文内容")]
+    #[allow(dead_code)]
     ExtractionFailed,
     #[error("URL 解析失败: {0}")]
     UrlError(#[from] url::ParseError),

@@ -12,5 +12,6 @@ export interface Canvas {
 export interface CanvasListItem {
     id: string;
     title: string;
+    createdAt: number;
     updatedAt: number;
 }

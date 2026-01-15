@@ -38,4 +38,8 @@ export default defineConfig(async () => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  
+  optimizeDeps: {
+    exclude: ['pdfjs-dist'],
+  },
 }));

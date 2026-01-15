@@ -22,6 +22,7 @@ pub struct CrdtDocument {
     /// Yrs 文档
     pub doc: Doc,
     /// 文档 ID (对应卡片 ID)
+    #[allow(dead_code)]
     pub id: String,
     /// 是否有未保存的更改
     pub dirty: bool,
@@ -84,6 +85,7 @@ impl CrdtDocument {
     }
 
     /// 获取文本内容 (从 "content" 字段)
+    #[allow(dead_code)]
     pub fn get_text(&self) -> String {
         let text = self.doc.get_or_insert_text("content");
         let txn = self.doc.transact();
@@ -91,6 +93,7 @@ impl CrdtDocument {
     }
 
     /// 设置文本内容
+    #[allow(dead_code)]
     pub fn set_text(&mut self, content: &str) {
         let text = self.doc.get_or_insert_text("content");
         let mut txn = self.doc.transact_mut();

@@ -55,7 +55,7 @@ function renderNodes(
 
       case "heading":
         const level = (node.attrs?.level as number) || 1;
-        const HeadingTag = `h${level}` as keyof JSX.IntrinsicElements;
+        const HeadingTag = `h${level}` as any;
         const headingClasses = {
           1: "text-2xl font-bold mb-3 mt-4",
           2: "text-xl font-bold mb-2 mt-3",
@@ -165,7 +165,7 @@ function renderInlineContent(
 
       // 应用格式标记（从内到外）
       let element: React.ReactNode = text;
-      
+
       // 按顺序应用标记
       for (const mark of marks) {
         switch (mark.type) {

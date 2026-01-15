@@ -60,6 +60,7 @@ pub enum AppError {
 }
 
 /// 结果类型别名
+#[allow(dead_code)]
 pub type AppResult<T> = Result<T, AppError>;
 
 /// 转换为 Tauri 命令错误（String）

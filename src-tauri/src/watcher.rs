@@ -148,6 +148,7 @@ impl VaultWatcher {
 }
 
 /// 带防抖的文件监听器（用于减少频繁触发）
+#[allow(dead_code)]
 pub struct DebouncedVaultWatcher {
     debouncer: Debouncer<RecommendedWatcher>,
     receiver: Receiver<Result<Vec<DebouncedEvent>, notify::Error>>,
@@ -156,6 +157,7 @@ pub struct DebouncedVaultWatcher {
 
 impl DebouncedVaultWatcher {
     /// 创建带防抖的监听器（默认 500ms 防抖）
+    #[allow(dead_code)]
     pub fn new(vault_path: &Path, debounce_ms: u64) -> Result<Self, String> {
         let (tx, rx) = channel();
         
@@ -179,6 +181,7 @@ impl DebouncedVaultWatcher {
     }
     
     /// 获取待处理的文件变更（非阻塞）
+    #[allow(dead_code)]
     pub fn poll_changes(&self) -> Vec<PathBuf> {
         let mut paths = Vec::new();
         
@@ -202,6 +205,7 @@ impl DebouncedVaultWatcher {
     }
     
     /// 检查路径是否在隐藏目录中
+    #[allow(dead_code)]
     fn is_hidden_path(&self, path: &Path) -> bool {
         if let Ok(relative) = path.strip_prefix(&self.vault_path) {
             relative.components().any(|c| {
@@ -213,6 +217,7 @@ impl DebouncedVaultWatcher {
     }
     
     /// 获取相对路径 ID
+    #[allow(dead_code)]
     pub fn get_relative_id(&self, path: &Path) -> Option<String> {
         path.strip_prefix(&self.vault_path)
             .ok()
@@ -223,6 +228,7 @@ impl DebouncedVaultWatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
     use std::fs;
     use tempfile::tempdir;
     

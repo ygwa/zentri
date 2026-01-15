@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import ePub, { Book, Rendition, Contents } from "epubjs";
 import { Button } from "@/components/ui/button";
 import {
   ChevronLeft,
@@ -13,20 +12,31 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getFileUrl } from "@/lib/file-url";
-import type { Highlight } from "@/types";
+import type { Highlight, AnnotationType } from "@/types";
 import { HighlightColorPicker, HIGHLIGHT_COLORS } from "./highlight-color-picker";
 import { FontSelector, FONT_OPTIONS } from "./font-selector";
+import { HighlightContextMenu } from "./highlight-context-menu";
+import { BookmarkPanel } from "./bookmark-panel";
+import { ShortcutsHelp } from "./shortcuts-help";
+import * as api from "@/services/api";
+import ePub, { Book, Rendition } from "epubjs";
 
 interface EpubReaderProps {
   url: string;
   sourceId?: string;
   sourceTitle?: string;
   highlights?: Highlight[];
-  onHighlight?: (text: string, cfiRange: string) => void;
-  onAddToNote?: (text: string, cfiRange: string) => void;
+  onHighlight?: (text: string, position: string, type?: AnnotationType) => void;
+  onAddToNote?: (text: string, position: string) => void;
   onProgress?: (progress: number) => void;
+  onProgressCfi?: (progress: number, cfi: string) => void;
   onColorChange?: (color: string) => void;
-  onPageChange?: (page: number, totalPages: number) => void; // EPUB 使用进度作为页码
+  onPageChange?: (page: number, totalPages: number) => void;
+  initialProgress?: number;
+  initialCfi?: string;
+  onHighlightUpdate?: (id: string, updates: { note?: string; color?: string }) => void;
+  onHighlightDelete?: (id: string) => void;
+  onBookmarkAdd?: (position: string) => void;
   className?: string;
 }
 
@@ -38,8 +48,14 @@ export function EpubReader({
   onHighlight,
   onAddToNote,
   onProgress,
+  onProgressCfi,
   onColorChange,
+  initialProgress,
+  initialCfi,
   onPageChange,
+  onHighlightUpdate,
+  onHighlightDelete,
+  onBookmarkAdd,
   className,
 }: EpubReaderProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -47,33 +63,105 @@ export function EpubReader({
   const renditionRef = useRef<Rendition | null>(null);
   const initializingRef = useRef(false);
   const currentUrlRef = useRef<string | null>(null);
-  
+
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [fontSize, setFontSize] = useState(100);
   const [fontFamily, setFontFamily] = useState<string>(FONT_OPTIONS[0].fontFamily);
-  const [selectedText, setSelectedText] = useState<{ 
-    text: string; 
-    cfiRange: string;
+  const [selectedText, setSelectedText] = useState<{
+    text: string;
+    cfi: string;
+    range?: Range;
     position?: { x: number; y: number };
   } | null>(null);
   const [showToc, setShowToc] = useState(false);
+  const [showBookmarks, setShowBookmarks] = useState(false);
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const [toc, setToc] = useState<{ label: string; href: string }[]>([]);
+  const [currentCfi, setCurrentCfi] = useState<string | null>(null);
   const [selectedHighlightColor, setSelectedHighlightColor] = useState<string>(
     HIGHLIGHT_COLORS[0].color
   );
-  const progressUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  
-  // 稳定的回调引用
+  const [selectedAnnotationType, setSelectedAnnotationType] = useState<AnnotationType>("highlight");
+  const [selectedHighlight, setSelectedHighlight] = useState<{
+    highlight: Highlight;
+    position: { x: number; y: number };
+  } | null>(null);
+
   const onProgressRef = useRef(onProgress);
   onProgressRef.current = onProgress;
+
+  const onProgressCfiRef = useRef(onProgressCfi);
+  onProgressCfiRef.current = onProgressCfi;
+
+  // 防抖的进度保存
+  const progressTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const debouncedProgressSave = useCallback((progressValue: number, cfi?: string) => {
+    if (progressTimeoutRef.current) {
+      clearTimeout(progressTimeoutRef.current);
+    }
+    progressTimeoutRef.current = setTimeout(() => {
+      if (onProgressRef.current) {
+        onProgressRef.current(progressValue);
+      }
+      if (cfi && onProgressCfiRef.current) {
+        onProgressCfiRef.current(progressValue, cfi);
+      }
+    }, 500);
+  }, []);
+
+  // 监听 initialProgress 和 initialCfi 变化
+  const prevInitialProgressRef = useRef(initialProgress);
+  const prevInitialCfiRef = useRef(initialCfi);
+  useEffect(() => {
+    if (!renditionRef.current) return;
+
+    const progressChanged = initialProgress !== undefined && initialProgress !== prevInitialProgressRef.current;
+    const cfiChanged = initialCfi !== undefined && initialCfi !== prevInitialCfiRef.current;
+
+    if (progressChanged || cfiChanged) {
+      prevInitialProgressRef.current = initialProgress;
+      prevInitialCfiRef.current = initialCfi;
+
+      try {
+        // 验证进度值范围
+        if (initialProgress !== undefined && (initialProgress < 0 || initialProgress > 100)) {
+          console.warn(`Invalid progress value: ${initialProgress}, must be 0-100`);
+          return;
+        }
+
+        if (initialCfi && typeof initialCfi === 'string' && initialCfi.toLowerCase().startsWith('epubcfi')) {
+          // 优先使用 CFI（更精确）
+          renditionRef.current.display(initialCfi);
+        } else if (initialProgress !== undefined && initialProgress >= 0 && initialProgress <= 100) {
+          // 使用百分比进度
+          const book = bookRef.current;
+          if (book) {
+            const spine = book.spine;
+            const total = (spine as any).length || 0;
+            if (total > 0) {
+              const targetIndex = Math.floor((initialProgress / 100) * total);
+              const targetItem = spine.get(targetIndex);
+              if (targetItem) {
+                renditionRef.current.display(targetItem.href);
+              } else {
+                console.warn(`Invalid target index ${targetIndex} for progress ${initialProgress}%`);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Failed to jump to progress:", err);
+        // 静默失败，不显示错误给用户（进度恢复失败不影响阅读）
+      }
+    }
+  }, [initialProgress, initialCfi]);
 
   // 初始化阅读器
   useEffect(() => {
     if (!containerRef.current || !url) return;
-    
-    // 防止重复初始化
+
     if (initializingRef.current || currentUrlRef.current === url) {
       return;
     }
@@ -82,328 +170,283 @@ export function EpubReader({
     initializingRef.current = true;
     currentUrlRef.current = url;
 
-    const initBook = async () => {
+    const initReader = async () => {
       try {
         setIsLoading(true);
         setError(null);
 
         // 清理旧实例
+        if (renditionRef.current) {
+          renditionRef.current.destroy();
+          renditionRef.current = null;
+        }
         if (bookRef.current) {
           bookRef.current.destroy();
           bookRef.current = null;
-          renditionRef.current = null;
         }
 
-        // 转换本地文件路径为可访问的 URL
-        const fileUrl = await getFileUrl(url);
-        console.log("Loading EPUB from:", fileUrl);
+        if (!containerRef.current || !isMounted) return;
 
-        // 在 Tauri 环境中，我们需要先获取文件内容然后创建 ArrayBuffer
-        let book: Book;
-        if (fileUrl.startsWith("asset://") || fileUrl.startsWith("http://asset.localhost")) {
-          console.log("Fetching EPUB via asset protocol...");
+        // 加载文件
+        let fileOrUrl: File | string | ArrayBuffer;
+        const isRelativePath = url &&
+          !url.startsWith("http") &&
+          !url.startsWith("asset://") &&
+          !url.startsWith("file://") &&
+          !url.startsWith("/") &&
+          !url.startsWith("tauri://") &&
+          !url.startsWith("blob:");
+
+        if (isRelativePath) {
+          // 相对路径，使用 Rust 后端读取文件
           try {
-            const response = await fetch(fileUrl);
-            if (!response.ok) {
-              throw new Error(`Failed to fetch EPUB: ${response.status}`);
+            const { invoke } = await import("@tauri-apps/api/core");
+            const fileData = await invoke<number[]>("read_book_file", { relativePath: url });
+            const arrayBuffer = new Uint8Array(fileData).buffer;
+            fileOrUrl = arrayBuffer;
+          } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            console.error("Failed to read file from Rust backend:", err);
+            // 提供更友好的错误消息
+            if (errorMessage.includes("not found") || errorMessage.includes("No such file")) {
+              throw new Error(`文件未找到: ${url}`);
+            } else if (errorMessage.includes("permission") || errorMessage.includes("Permission")) {
+              throw new Error(`没有权限访问文件: ${url}`);
+            } else {
+              throw new Error(`无法加载 EPUB 文件: ${errorMessage}`);
             }
-            const arrayBuffer = await response.arrayBuffer();
-            console.log("EPUB fetched, size:", arrayBuffer.byteLength);
-            book = ePub(arrayBuffer);
-          } catch (fetchErr) {
-            console.error("Failed to fetch EPUB:", fetchErr);
-            throw fetchErr;
           }
         } else {
-          // 直接从 URL 加载
-          book = ePub(fileUrl);
+          // 绝对路径或 URL
+          try {
+            const fileUrl = await getFileUrl(url);
+            fileOrUrl = fileUrl;
+          } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            console.error("Failed to get file URL:", err);
+            throw new Error(`无法获取文件 URL: ${errorMessage}`);
+          }
         }
+
+        // 创建 Book 实例
+        const book = ePub(fileOrUrl);
         bookRef.current = book;
 
-        // 等待书籍加载
         await book.ready;
-        console.log("EPUB book ready");
-
-        if (!isMounted) return;
-
-        // 获取目录
-        const navigation = await book.loaded.navigation;
-        const tocItems = navigation.toc.map((item) => ({
-          label: item.label.trim(),
-          href: item.href,
-        }));
-        setToc(tocItems);
-        console.log("EPUB TOC loaded:", tocItems.length, "items");
 
         if (!isMounted || !containerRef.current) return;
 
-        // 渲染到容器 - 使用固定像素尺寸而不是百分比
-        const container = containerRef.current;
-        let rect = container.getBoundingClientRect();
-        
-        // 如果容器尺寸为 0，等待一帧后重新获取
-        if (rect.width === 0 || rect.height === 0) {
-          await new Promise(resolve => requestAnimationFrame(resolve));
-          rect = container.getBoundingClientRect();
+        // 获取目录
+        if (book.navigation) {
+          const tocItems: { label: string; href: string }[] = [];
+          const processToc = (items: any[]) => {
+            for (const item of items) {
+              tocItems.push({
+                label: item.label || "",
+                href: item.href || "",
+              });
+              if (item.subitems) {
+                processToc(item.subitems);
+              }
+            }
+          };
+          processToc(book.navigation.toc);
+          setToc(tocItems);
         }
-        
-        const width = Math.max(rect.width, 300);
-        const height = Math.max(rect.height, 400);
-        console.log("EPUB container size:", width, "x", height);
-        
-        const rendition = book.renderTo(container, {
-          width,
-          height,
+
+        // 创建 Rendition
+        const rendition = book.renderTo(containerRef.current, {
+          width: "100%",
+          height: "100%",
           spread: "none",
-          flow: "paginated",
-          allowScriptedContent: true,
         });
         renditionRef.current = rendition;
 
-        // 监听渲染完成
-        rendition.on("rendered", (section: { index: number }) => {
-          console.log("EPUB section rendered:", section.index);
-          if (isMounted) {
-            setIsLoading(false);
+        // 设置字体样式
+        rendition.themes.default({
+          "body": {
+            "font-family": fontFamily,
+            "font-size": `${fontSize}%`,
+          },
+        });
+
+        // 监听位置变化
+        rendition.on("relocated", (location: any) => {
+          if (!isMounted) return;
+
+          const cfi = location.start.cfi;
+          setCurrentCfi(cfi);
+
+          // 计算进度
+          const book = bookRef.current;
+          if (book) {
+            const spine = book.spine;
+            const total = (spine as any).length || 0;
+            const current = location.start.index;
+            const percent = Math.round((current / total) * 100);
+            setProgress(percent);
+            debouncedProgressSave(percent, cfi);
+
+            if (onPageChange) {
+              onPageChange(percent, 100);
+            }
           }
-          
-          // 修复 iframe sandbox 权限问题
-          const iframes = container.querySelectorAll("iframe");
-          iframes.forEach((iframe) => {
-            if (iframe.sandbox) {
-              iframe.sandbox.add("allow-scripts");
-              iframe.sandbox.add("allow-same-origin");
+        });
+
+        // 监听渲染完成
+        rendition.on("rendered", (_section: any) => {
+          if (!isMounted) return;
+
+          // 应用高亮（带验证和错误处理）
+          let failedHighlights = 0;
+          highlights.forEach((h) => {
+            const cfi = h.position?.cfi;
+            if (cfi && typeof cfi === "string" && cfi.toLowerCase().startsWith("epubcfi")) {
+              try {
+                const type = h.type === "underline" ? "underline" : "highlight";
+                rendition.annotations.add(type, cfi, {}, () => {}, "hl", {
+                  fill: h.color || selectedHighlightColor,
+                  "fill-opacity": "0.4",
+                });
+              } catch (err) {
+                failedHighlights++;
+                console.warn(`Failed to restore highlight ${h.id}:`, err);
+                // 记录失败的高亮，但不阻止其他高亮显示
+              }
+            } else if (cfi) {
+              // CFI 格式无效
+              failedHighlights++;
+              console.warn(`Invalid CFI format for highlight ${h.id}: ${cfi}`);
             }
           });
-        });
 
-        // 设置主题样式（初始字体）
-        rendition.themes.default({
-          body: {
-            "font-family": fontFamily,
-            "line-height": "1.8",
-            "padding": "20px 40px",
-            "background": "#fff",
-          },
-          "a": {
-            "color": "#2563eb",
-            "text-decoration": "underline",
-          },
-        });
+          // 如果有高亮恢复失败，记录但不显示错误（避免干扰用户体验）
+          if (failedHighlights > 0) {
+            console.warn(`${failedHighlights} highlight(s) could not be restored`);
+          }
 
-        // 监听位置变化（带防抖）
-        rendition.on("relocated", (location: { start: { percentage: number } }) => {
-          const percent = Math.round(location.start.percentage * 100);
-          setProgress(percent);
-          
-          // 立即更新进度（UI显示）
-          if (onProgressRef.current) {
-            onProgressRef.current(percent);
-          }
-          
-          // 通知页码变化（EPUB 使用进度作为页码）
-          if (onPageChange) {
-            // EPUB 没有明确的页码，使用百分比作为"页码"
-            onPageChange(percent, 100);
-          }
-        });
-        
-        // 初始显示后，手动触发一次进度更新
-        rendition.on("rendered", () => {
-          // 等待一帧确保位置已更新，relocated 事件会自动触发进度更新
-          // 这里不需要手动获取，因为 relocated 事件会在内容渲染后自动触发
+          setIsLoading(false);
         });
 
         // 监听文本选择
-        rendition.on("selected", (cfiRange: string, contents: Contents) => {
-          const selection = contents.window.getSelection();
-          if (selection && selection.toString().trim()) {
-            // 获取选中文本的位置
+        rendition.on("selected", (cfiRange: string, contents: any) => {
+          if (!isMounted) return;
+
+          const text = contents.window.getSelection().toString().trim();
+          if (text) {
+            const range = contents.window.getSelection().getRangeAt(0);
+            const rect = range.getBoundingClientRect();
+            const containerRect = containerRef.current?.getBoundingClientRect();
+
             let position: { x: number; y: number } | undefined;
-            try {
-              const range = selection.getRangeAt(0);
-              const rect = range.getBoundingClientRect();
-              const iframe = container.querySelector("iframe");
-              if (iframe && rect) {
-                const iframeRect = iframe.getBoundingClientRect();
-                const containerRect = container.getBoundingClientRect();
-                // 计算相对于容器的位置
-                position = {
-                  x: iframeRect.left - containerRect.left + rect.left + rect.width / 2,
-                  y: iframeRect.top - containerRect.top + rect.top,
-                };
-              }
-            } catch (e) {
-              console.warn("Could not get selection position:", e);
+            if (containerRect) {
+              position = {
+                x: rect.left - containerRect.left + rect.width / 2,
+                y: rect.top - containerRect.top,
+              };
             }
-            
+
             setSelectedText({
-              text: selection.toString().trim(),
-              cfiRange,
+              text,
+              cfi: cfiRange,
+              range,
               position,
             });
+          } else {
+            setSelectedText(null);
           }
         });
 
-        // 点击时清除选择
-        rendition.on("click", () => {
-          setSelectedText(null);
+        // 监听高亮点击
+        rendition.on("annotations", (_type: string, cfi: string, _data: any, section: any) => {
+          if (!isMounted) return;
+
+          const highlight = highlights.find((h) => h.position?.cfi === cfi);
+          if (highlight) {
+            const rect = section.getBoundingClientRect();
+            const containerRect = containerRef.current?.getBoundingClientRect();
+
+            let position: { x: number; y: number } | undefined;
+            if (containerRect) {
+              position = {
+                x: rect.left - containerRect.left + rect.width / 2,
+                y: rect.top - containerRect.top,
+              };
+            }
+
+            if (position) {
+              setSelectedHighlight({ highlight, position });
+            }
+          }
         });
 
-        // 显示内容 - 添加超时保护
-        console.log("Displaying EPUB...");
-        const displayPromise = rendition.display();
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("Display timeout")), 10000)
-        );
-        
-        try {
-          await Promise.race([displayPromise, timeoutPromise]);
-          console.log("EPUB display() completed");
-        } catch (displayErr) {
-          console.warn("EPUB display warning:", displayErr);
-          // 不抛出错误，可能只是超时但内容已经加载
+        // 开始渲染
+        if (initialCfi) {
+          rendition.display(initialCfi);
+        } else if (initialProgress !== undefined) {
+          const spine = book.spine;
+          const total = (spine as any).length || 0;
+          const targetIndex = Math.floor((initialProgress / 100) * total);
+          const targetItem = spine.get(targetIndex);
+          if (targetItem) {
+            rendition.display(targetItem.href);
+          } else {
+            rendition.display();
+          }
+        } else {
+          rendition.display();
         }
 
-        // 确保加载状态更新
-        if (isMounted) {
-          setIsLoading(false);
-        }
-        
         initializingRef.current = false;
       } catch (err) {
         console.error("Failed to load EPUB:", err);
         if (isMounted) {
-          setError(`无法加载 EPUB 文件: ${err instanceof Error ? err.message : String(err)}`);
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          // 确保错误消息对用户友好
+          setError(errorMessage || "无法加载 EPUB 文件");
           setIsLoading(false);
         }
         initializingRef.current = false;
       }
     };
 
-    initBook();
+    initReader();
 
     return () => {
       isMounted = false;
+
+      if (renditionRef.current) {
+        renditionRef.current.destroy();
+        renditionRef.current = null;
+      }
       if (bookRef.current) {
         bookRef.current.destroy();
         bookRef.current = null;
-        renditionRef.current = null;
       }
       currentUrlRef.current = null;
       initializingRef.current = false;
-      if (progressUpdateTimeoutRef.current) {
-        clearTimeout(progressUpdateTimeoutRef.current);
+
+      if (progressTimeoutRef.current) {
+        clearTimeout(progressTimeoutRef.current);
       }
     };
-  }, [url]); // 只依赖 url，使用 ref 来访问回调
+  }, [url, fontFamily, fontSize, highlights, selectedHighlightColor, initialProgress, initialCfi, debouncedProgressSave, onPageChange]);
 
-  // 监听容器尺寸变化，更新 epub.js 布局
-  useEffect(() => {
-    if (!containerRef.current || !renditionRef.current) return;
-    
-    const container = containerRef.current;
-    let resizeTimeout: ReturnType<typeof setTimeout>;
-    
-    const resizeObserver = new ResizeObserver((entries) => {
-      // 使用防抖避免频繁调用
-      clearTimeout(resizeTimeout);
-      resizeTimeout = setTimeout(() => {
-        const entry = entries[0];
-        if (entry && renditionRef.current) {
-          const { width, height } = entry.contentRect;
-          if (width > 0 && height > 0) {
-            console.log("Resizing EPUB to:", width, "x", height);
-            renditionRef.current.resize(width, height);
-          }
-        }
-      }, 100);
-    });
-    
-    resizeObserver.observe(container);
-    
-    return () => {
-      clearTimeout(resizeTimeout);
-      resizeObserver.disconnect();
-    };
-  }, [isLoading]); // 在加载完成后开始监听
-
-  // 应用高亮 - 使用 CFI 定位
-  useEffect(() => {
-    if (!renditionRef.current || highlights.length === 0) return;
-
-    // 清除现有高亮（避免重复）
-    // epub.js 没有直接的 clearAnnotations，需要重新添加
-
-    highlights.forEach((h) => {
-      // 优先使用 CFI 定位
-      const cfi = h.position?.cfi || h.position?.startOffset;
-      if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi')) {
-        try {
-          renditionRef.current?.annotations.highlight(
-            cfi,
-            { id: h.id },
-            () => {},
-            'hl',
-            { 
-              fill: h.color || 'rgba(255, 235, 59, 0.4)',
-              'fill-opacity': '0.4',
-            }
-          );
-        } catch (err) {
-          console.warn('Failed to apply highlight:', err);
-        }
-      }
-    });
-  }, [highlights]);
-
-  // 更新字体大小
+  // 更新字体大小和字体
   useEffect(() => {
     if (renditionRef.current) {
-      renditionRef.current.themes.fontSize(`${fontSize}%`);
+      renditionRef.current.themes.default({
+        "body": {
+          "font-family": fontFamily,
+          "font-size": `${fontSize}%`,
+        },
+      });
+      (renditionRef.current.themes as any).update({ 
+  "font-size": `${fontSize}px`,
+  "font-family": fontFamily 
+});
     }
-  }, [fontSize]);
-
-  // 更新字体
-  useEffect(() => {
-    if (renditionRef.current && containerRef.current) {
-      // 直接操作 iframe 内的样式（最可靠的方法）
-      const updateFont = () => {
-        const iframe = containerRef.current?.querySelector("iframe");
-        if (iframe && iframe.contentDocument) {
-          // 移除旧的字体样式
-          const oldStyle = iframe.contentDocument.querySelector("style[data-font-override]");
-          if (oldStyle) {
-            oldStyle.remove();
-          }
-          
-          // 添加新的字体样式
-          const style = iframe.contentDocument.createElement("style");
-          style.setAttribute("data-font-override", "true");
-          style.textContent = `
-            body, * {
-              font-family: ${fontFamily} !important;
-            }
-          `;
-          iframe.contentDocument.head.appendChild(style);
-        }
-      };
-      
-      // 立即尝试更新
-      updateFont();
-      
-      // 监听渲染事件，确保在内容渲染后更新字体
-      const handleRendered = () => {
-        updateFont();
-      };
-      
-      renditionRef.current.on("rendered", handleRendered);
-      
-      return () => {
-        renditionRef.current?.off("rendered", handleRendered);
-      };
-    }
-  }, [fontFamily]);
+  }, [fontSize, fontFamily]);
 
   // 翻页
   const goNext = useCallback(() => {
@@ -415,70 +458,95 @@ export function EpubReader({
   }, []);
 
   // 跳转到目录项
-  const goToToc = useCallback(async (href: string) => {
-    if (!renditionRef.current) {
-      console.warn("Rendition not ready");
-      return;
-    }
-    try {
-      console.log("Navigating to:", href);
-      setShowToc(false);
-      await renditionRef.current.display(href);
-    } catch (err) {
-      console.error("Failed to navigate to TOC item:", err);
-    }
-  }, []);
+  const goToToc = useCallback(
+    async (href: string) => {
+      if (!renditionRef.current) return;
+      try {
+        setShowToc(false);
+        renditionRef.current.display(href);
+      } catch (err) {
+        console.error("Failed to navigate to TOC item:", err);
+      }
+    },
+    []
+  );
 
   // 高亮选中文本
-  const highlightSelected = useCallback((color?: string) => {
-    if (!selectedText || !renditionRef.current) return;
+  const highlightSelected = useCallback(
+    async (color?: string, type?: AnnotationType) => {
+      if (!selectedText || !renditionRef.current) return;
 
-    const highlightColor = color || selectedHighlightColor;
-    
-    // 提取颜色值用于 epub.js（需要 RGB 格式）
-    const rgbMatch = highlightColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-    let fillColor = "yellow";
-    let fillOpacity = "0.3";
-    
-    if (rgbMatch) {
-      const r = parseInt(rgbMatch[1]);
-      const g = parseInt(rgbMatch[2]);
-      const b = parseInt(rgbMatch[3]);
-      fillColor = `rgb(${r}, ${g}, ${b})`;
-      // 从 rgba 中提取透明度
-      const opacityMatch = highlightColor.match(/[\d.]+\)$/);
-      if (opacityMatch) {
-        fillOpacity = opacityMatch[0].replace(')', '');
+      const highlightColor = color || selectedHighlightColor;
+      const annotationType = type || selectedAnnotationType;
+      const cfi = selectedText.cfi;
+
+      try {
+        const finalType = annotationType === "underline" ? "underline" : "highlight";
+        renditionRef.current.annotations.add(finalType, cfi, {}, () => {}, "hl", {
+          fill: highlightColor,
+          "fill-opacity": "0.4",
+        });
+
+        onHighlight?.(selectedText.text, cfi, annotationType);
+        setSelectedText(null);
+      } catch (err) {
+        console.error("Failed to add highlight:", err);
       }
-    }
-
-    // 添加高亮标注
-    renditionRef.current.annotations.highlight(
-      selectedText.cfiRange,
-      {},
-      () => {},
-      "hl",
-      { fill: fillColor, "fill-opacity": fillOpacity }
-    );
-
-    // 回调（传递颜色信息）
-    onHighlight?.(selectedText.text, selectedText.cfiRange);
-    setSelectedText(null);
-  }, [selectedText, onHighlight, selectedHighlightColor]);
+    },
+    [selectedText, onHighlight, selectedHighlightColor, selectedAnnotationType]
+  );
 
   // 键盘导航
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === "INPUT" ||
+          (e.target as HTMLElement)?.tagName === "TEXTAREA") {
+        return;
+      }
+
       if (e.key === "ArrowRight" || e.key === "PageDown") {
+        e.preventDefault();
         goNext();
       } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
+        e.preventDefault();
         goPrev();
+      } else if ((e.key === "b" || e.key === "B") && !e.shiftKey) {
+        if (sourceId && currentCfi && onBookmarkAdd) {
+          e.preventDefault();
+          (async () => {
+            try {
+              if (api.isTauriEnv()) {
+                await api.bookmarks.create({
+                  sourceId,
+                  position: currentCfi,
+                });
+                onBookmarkAdd(currentCfi);
+              }
+            } catch (err) {
+              console.error("Failed to create bookmark:", err);
+            }
+          })();
+        }
+      } else if (e.key === "t" || e.key === "T") {
+        e.preventDefault();
+        setShowToc(prev => !prev);
+      } else if ((e.key === "b" || e.key === "B") && e.shiftKey) {
+        e.preventDefault();
+        setShowBookmarks(prev => !prev);
+      } else if (e.key === "?") {
+        e.preventDefault();
+        setShowShortcutsHelp(true);
+      } else if (e.key === "Escape") {
+        setShowToc(false);
+        setShowBookmarks(false);
+        setShowShortcutsHelp(false);
+        setSelectedHighlight(null);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [goNext, goPrev]);
+  }, [goNext, goPrev, sourceId, currentCfi, onBookmarkAdd]);
 
   if (error) {
     return (
@@ -548,16 +616,30 @@ export function EpubReader({
         </div>
       )}
 
+      {/* 书签面板 */}
+      {showBookmarks && sourceId && (
+        <div className="absolute top-10 right-0 bottom-0 w-64 bg-background border-l z-10">
+          <BookmarkPanel
+            sourceId={sourceId}
+            onNavigate={(position) => {
+              if (renditionRef.current) {
+                renditionRef.current.display(position);
+              }
+            }}
+          />
+        </div>
+      )}
+
       {/* 阅读区域 */}
       <div className="flex-1 relative">
         {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-background">
+          <div className="absolute inset-0 flex items-center justify-center bg-background z-50">
             <div className="text-sm text-muted-foreground">加载中...</div>
           </div>
         )}
         <div ref={containerRef} className="h-full" />
-        
-        {/* 半透明翻页按钮 - 不遮挡内容（参考微信读书） */}
+
+        {/* 翻页按钮 */}
         <button
           onClick={goPrev}
           className="absolute left-4 top-1/2 -translate-y-1/2 z-40 w-12 h-20 flex items-center justify-center bg-black/20 hover:bg-black/40 backdrop-blur-sm rounded-lg transition-all opacity-0 hover:opacity-100 group"
@@ -574,67 +656,80 @@ export function EpubReader({
         </button>
       </div>
 
-      {/* 选中文本工具栏 - 跟随选中位置（参考微信读书样式） */}
+      {/* 选中文本工具栏 */}
       {selectedText && (
-        <div 
+        <div
           className="absolute bg-popover border rounded-lg shadow-xl p-2.5 flex items-center gap-2 z-50 backdrop-blur-sm animate-in fade-in-0 zoom-in-95 duration-200"
-          style={selectedText.position ? (() => {
-            const containerWidth = containerRef.current?.offsetWidth || 400;
-            const popupHeight = 60;
-            const spaceAbove = selectedText.position.y;
-            
-            // 智能定位：优先显示在上方
-            if (spaceAbove > popupHeight + 20) {
-              return {
-                left: `${Math.max(150, Math.min(selectedText.position.x, containerWidth - 150))}px`,
-                top: `${Math.max(10, selectedText.position.y - popupHeight - 10)}px`,
-                transform: 'translateX(-50%)',
-              };
-            } else {
-              return {
-                left: `${Math.max(150, Math.min(selectedText.position.x, containerWidth - 150))}px`,
-                top: `${Math.min((containerRef.current?.offsetHeight || 600) - popupHeight - 10, selectedText.position.y + 40)}px`,
-                transform: 'translateX(-50%)',
-              };
-            }
-          })() : {
-            bottom: '80px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-          }}
+          style={
+            selectedText.position
+              ? (() => {
+                  const containerWidth = containerRef.current?.offsetWidth || 400;
+                  const popupHeight = 60;
+                  const spaceAbove = selectedText.position.y;
+
+                  if (spaceAbove > popupHeight + 20) {
+                    return {
+                      left: `${Math.max(150, Math.min(selectedText.position.x, containerWidth - 150))}px`,
+                      top: `${Math.max(10, selectedText.position.y - popupHeight - 10)}px`,
+                      transform: "translateX(-50%)",
+                    };
+                  } else {
+                    return {
+                      left: `${Math.max(150, Math.min(selectedText.position.x, containerWidth - 150))}px`,
+                      top: `${Math.min(
+                        (containerRef.current?.offsetHeight || 600) - popupHeight - 10,
+                        selectedText.position.y + 40
+                      )}px`,
+                      transform: "translateX(-50%)",
+                    };
+                  }
+                })()
+              : {
+                  bottom: "80px",
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                }
+          }
         >
-          <div 
-            className="cursor-grab hover:bg-muted p-1.5 rounded active:cursor-grabbing transition-colors"
+          <div
+            className="cursor-grab hover:bg-blue-50 hover:border-blue-200 border border-transparent p-1.5 rounded active:cursor-grabbing transition-all flex items-center gap-1.5 group/drag"
             draggable
             onDragStart={(e) => {
               if (sourceId) {
-                e.dataTransfer.setData("application/x-zentri-reference", JSON.stringify({
-                  sourceId,
-                  sourceTitle: sourceTitle || "EPUB",
-                  text: selectedText.text,
-                  cfi: selectedText.cfiRange,
-                  type: "epub",
-                }));
+                e.dataTransfer.setData(
+                  "application/x-zentri-reference",
+                  JSON.stringify({
+                    sourceId,
+                    sourceTitle: sourceTitle || "EPUB",
+                    text: selectedText.text,
+                    cfi: selectedText.cfi,
+                    type: "epub",
+                  })
+                );
                 e.dataTransfer.effectAllowed = "copy";
               }
             }}
             title="拖拽到编辑器以创建引用"
           >
-            <GripVertical className="h-4 w-4 text-muted-foreground" />
+            <GripVertical className="h-4 w-4 text-blue-600 group-hover/drag:text-blue-700" />
+            <span className="text-[10px] font-medium text-blue-600 group-hover/drag:text-blue-700 hidden sm:inline">拖拽</span>
           </div>
-          
-          {/* 颜色选择器 */}
+
           <div className="px-1 border-l border-r border-border">
             <HighlightColorPicker
               selectedColor={selectedHighlightColor}
+              selectedType={selectedAnnotationType}
               onColorSelect={(color) => {
                 setSelectedHighlightColor(color);
-                onColorChange?.(color); // 通知父组件颜色改变
-                highlightSelected(color);
+                onColorChange?.(color);
               }}
+              onTypeSelect={(type) => {
+                setSelectedAnnotationType(type);
+              }}
+              showTypeSelector={true}
             />
           </div>
-          
+
           <Button
             variant="ghost"
             size="sm"
@@ -650,7 +745,7 @@ export function EpubReader({
             className="h-8 text-xs gap-1.5 px-3"
             onClick={() => {
               highlightSelected();
-              onAddToNote?.(selectedText.text, selectedText.cfiRange);
+              onAddToNote?.(selectedText.text, selectedText.cfi);
             }}
           >
             <Plus className="h-3.5 w-3.5" />
@@ -659,12 +754,48 @@ export function EpubReader({
         </div>
       )}
 
+      {/* 高亮上下文菜单 */}
+      {selectedHighlight && (
+        <HighlightContextMenu
+          highlight={selectedHighlight.highlight}
+          position={selectedHighlight.position}
+          onEdit={(id, note) => {
+            onHighlightUpdate?.(id, { note });
+            setSelectedHighlight(null);
+          }}
+          onDelete={(id) => {
+            onHighlightDelete?.(id);
+            if (renditionRef.current && selectedHighlight.highlight.position?.cfi) {
+              renditionRef.current.annotations.remove(selectedHighlight.highlight.position.cfi, "highlight");
+              renditionRef.current.annotations.remove(selectedHighlight.highlight.position.cfi, "underline");
+            }
+            setSelectedHighlight(null);
+          }}
+          onColorChange={(id, color) => {
+            onHighlightUpdate?.(id, { color });
+            if (renditionRef.current && selectedHighlight.highlight.position?.cfi) {
+              const cfi = selectedHighlight.highlight.position.cfi;
+              renditionRef.current.annotations.remove(cfi, "highlight");
+              renditionRef.current.annotations.remove(cfi, "underline");
+              const type = selectedHighlight.highlight.type === "underline" ? "underline" : "highlight";
+              renditionRef.current.annotations.add(type, cfi, {}, () => {}, "hl", {
+                fill: color,
+                "fill-opacity": "0.4",
+              });
+            }
+          }}
+          onClose={() => setSelectedHighlight(null)}
+        />
+      )}
+
+      {/* 快捷键帮助 */}
+      {showShortcutsHelp && (
+        <ShortcutsHelp onClose={() => setShowShortcutsHelp(false)} />
+      )}
+
       {/* 进度条 */}
       <div className="h-1 bg-muted">
-        <div
-          className="h-full bg-primary transition-all"
-          style={{ width: `${progress}%` }}
-        />
+        <div className="h-full bg-primary transition-all" style={{ width: `${progress}%` }} />
       </div>
     </div>
   );

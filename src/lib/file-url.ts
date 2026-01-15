@@ -28,9 +28,12 @@ export async function getFileUrl(path: string): Promise<string> {
   if (isTauriEnv()) {
     try {
       const { convertFileSrc } = await import("@tauri-apps/api/core");
-      return convertFileSrc(path);
+      const converted = convertFileSrc(path);
+      console.log("[FileURL] Original path:", path);
+      console.log("[FileURL] Converted URL:", converted);
+      return converted;
     } catch (err) {
-      console.error("Failed to convert file src:", err);
+      console.error("[FileURL] Failed to convert file src:", err);
       // 降级方案：尝试直接返回路径
       return path;
     }
@@ -60,6 +63,9 @@ export function isLocalFilePath(path: string): boolean {
   // macOS/Linux 绝对路径或 Windows 路径
   return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
 }
+
+
+
 
 
 

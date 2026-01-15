@@ -33,6 +33,21 @@ pub struct HighlightPosition {
     pub text_offset: Option<i32>,
 }
 
+/// 标注类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AnnotationType {
+    Highlight,
+    Underline,
+    Strikethrough,
+}
+
+impl Default for AnnotationType {
+    fn default() -> Self {
+        AnnotationType::Highlight
+    }
+}
+
 /// 高亮摘录
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,6 +57,8 @@ pub struct Highlight {
     pub card_id: Option<String>,
     pub content: String,
     pub note: Option<String>,
+    #[serde(rename = "type")]
+    pub annotation_type: Option<AnnotationType>, // 标注类型：高亮、下划线、删除线（默认为 highlight）
     pub position: Option<HighlightPosition>,
     pub color: Option<String>,
     pub created_at: i64,
@@ -55,6 +72,8 @@ pub struct CreateHighlightRequest {
     pub card_id: Option<String>,
     pub content: String,
     pub note: Option<String>,
+    #[serde(rename = "type")]
+    pub annotation_type: Option<AnnotationType>,
     pub position: Option<HighlightPosition>,
     pub color: Option<String>,
 }
@@ -65,6 +84,8 @@ pub struct CreateHighlightRequest {
 pub struct UpdateHighlightRequest {
     pub note: Option<String>,
     pub color: Option<String>,
+    #[serde(rename = "type")]
+    pub annotation_type: Option<AnnotationType>,
     pub card_id: Option<String>,
 }
 

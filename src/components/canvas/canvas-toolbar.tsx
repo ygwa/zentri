@@ -1,5 +1,5 @@
 /**
- * 白板工具栏 - 用于添加不同类型的节点
+ * Canvas Toolbar - Floating dock for adding nodes
  */
 import { useCallback } from 'react';
 import { useReactFlow } from '@xyflow/react';
@@ -11,75 +11,80 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 
 interface CanvasToolbarProps {
   onAddNode: (type: string, position: { x: number; y: number }) => void;
+  className?: string; // Allow custom classNames
 }
 
 const nodeTypeConfig = [
   {
     type: 'text',
-    label: '文本',
+    label: 'Text',
     icon: Type,
-    color: 'bg-gray-100 hover:bg-gray-200 border-gray-300',
-    description: '添加文本节点',
+    description: 'Add text',
   },
   {
     type: 'card',
-    label: '卡片',
+    label: 'Card',
     icon: CreditCard,
-    color: 'bg-blue-100 hover:bg-blue-200 border-blue-300',
-    description: '添加卡片节点',
+    description: 'Add existing card',
   },
   {
     type: 'note',
-    label: '笔记',
+    label: 'Note',
     icon: StickyNote,
-    color: 'bg-yellow-100 hover:bg-yellow-200 border-yellow-300',
-    description: '添加笔记节点',
+    description: 'Add sticky note',
   },
   {
     type: 'document',
-    label: '文档',
+    label: 'Doc',
     icon: FileText,
-    color: 'bg-green-100 hover:bg-green-200 border-green-300',
-    description: '添加文档节点',
+    description: 'Add document',
   },
   {
     type: 'link',
-    label: '链接',
+    label: 'Link',
     icon: Link2,
-    color: 'bg-purple-100 hover:bg-purple-200 border-purple-300',
-    description: '添加链接节点',
+    description: 'Add link',
   },
 ];
 
-export function CanvasToolbar({ onAddNode }: CanvasToolbarProps) {
+export function CanvasToolbar({ onAddNode, className }: CanvasToolbarProps) {
   const { screenToFlowPosition } = useReactFlow();
 
   const handleAddNode = useCallback(
     (type: string) => {
-      // 获取视口中心位置
+      // Get center of viewport
       const centerX = window.innerWidth / 2;
       const centerY = window.innerHeight / 2;
-      
-      // 转换为流程坐标
+
       const position = screenToFlowPosition({
         x: centerX,
         y: centerY,
       });
 
-      onAddNode(type, position);
+      // Add small random offset to prevent perfect stacking if user clicks multiple times fast
+      const randomOffset = {
+        x: (Math.random() - 0.5) * 20,
+        y: (Math.random() - 0.5) * 20,
+      };
+
+      onAddNode(type, { x: position.x + randomOffset.x, y: position.y + randomOffset.y });
     },
     [screenToFlowPosition, onAddNode]
   );
 
   return (
-    <TooltipProvider>
-      <div className="absolute top-4 right-4 z-20 bg-white/90 backdrop-blur rounded-lg shadow-lg border border-gray-200 p-2 flex flex-col gap-2">
-        <div className="text-xs font-semibold text-gray-500 px-2 py-1 border-b border-gray-200">
-          添加节点
-        </div>
+    <TooltipProvider delayDuration={0}>
+      <div className={cn(
+        "absolute bottom-8 left-1/2 -translate-x-1/2 z-20",
+        "flex items-center gap-2 p-2 rounded-full",
+        "bg-white/80 backdrop-blur-xl border border-zinc-200/60 shadow-xl shadow-zinc-200/20",
+        "transition-all duration-300 hover:scale-[1.02]",
+        className
+      )}>
         {nodeTypeConfig.map((config) => {
           const Icon = config.icon;
           return (
@@ -87,15 +92,18 @@ export function CanvasToolbar({ onAddNode }: CanvasToolbarProps) {
               <TooltipTrigger asChild>
                 <Button
                   variant="ghost"
-                  size="sm"
-                  className={`w-full justify-start gap-2 ${config.color}`}
+                  size="icon"
+                  className={cn(
+                    "rounded-full h-10 w-10 transition-all",
+                    "hover:bg-zinc-100 hover:text-zinc-900 text-zinc-500"
+                  )}
                   onClick={() => handleAddNode(config.type)}
                 >
-                  <Icon className="h-4 w-4" />
-                  <span className="text-xs">{config.label}</span>
+                  <Icon className="h-5 w-5" />
+                  <span className="sr-only">{config.label}</span>
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>
+              <TooltipContent side="top" className="mb-2">
                 <p>{config.description}</p>
               </TooltipContent>
             </Tooltip>
@@ -105,4 +113,3 @@ export function CanvasToolbar({ onAddNode }: CanvasToolbarProps) {
     </TooltipProvider>
   );
 }
-

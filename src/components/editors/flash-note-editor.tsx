@@ -9,7 +9,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { X, Save } from "lucide-react";
 import { ZentriEditor } from "@/components/editor";
-import { cn } from "@/lib/utils";
 import type { JSONContent, Editor } from "@tiptap/core";
 
 export interface FlashNoteEditorProps {
@@ -166,4 +165,7 @@ export function FlashNoteEditor({
     </div>
   );
 }
+
+
+
 

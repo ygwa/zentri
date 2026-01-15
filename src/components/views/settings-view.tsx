@@ -1,43 +1,60 @@
 import { useState } from "react";
-import { Settings, Monitor, Edit3, GitGraph, UploadCloud, Download, Import, FolderOpen } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Settings, Monitor, Edit3, GitGraph, UploadCloud, Download, Import, FolderOpen, Info, ArrowLeft, Sparkles } from "lucide-react";
 import { useAppStore } from "@/store";
+import { Button } from "@/components/ui/button";
+import { VaultSwitcherDialog } from "@/components/vault-switcher-dialog";
+import { useTheme } from "@/hooks/use-theme";
+import { LEGACY_ROUTES } from "@/router/constants";
+import { ModelManager } from "@/components/ai/model-manager";
 
 export function SettingsView() {
+    const navigate = useNavigate();
     const tabs = [
         { id: 'general', icon: Monitor, label: 'General' },
         { id: 'editor', icon: Edit3, label: 'Editor' },
         { id: 'graph', icon: GitGraph, label: 'Knowledge Graph' },
-        { id: 'sync', icon: UploadCloud, label: 'Sync & Backup' }
+        { id: 'ai', icon: Sparkles, label: 'AI' },
+        { id: 'sync', icon: UploadCloud, label: 'Sync & Backup' },
+        { id: 'about', icon: Info, label: 'About' }
     ];
-    
+
     const [activeTab, setActiveTab] = useState('general');
     const [isVaultSwitcherOpen, setIsVaultSwitcherOpen] = useState(false);
-    const { vaultPath } = useAppStore();
+    const { vaultPath, cards, sources, highlights } = useAppStore();
+    const { theme, setTheme } = useTheme();
 
     /**
      * 格式化路径显示（缩短长路径）
      */
     const formatPath = (path: string | null): string => {
         if (!path) return "未设置";
-        
+
         // 处理 ~ 开头的路径
         if (path.startsWith("~")) {
             return path;
         }
-        
+
         // 如果路径太长，只显示最后一部分
         const parts = path.split(/[/\\]/);
         if (parts.length > 3) {
             return "..." + parts.slice(-3).join("/");
         }
-        
+
         return path;
     };
 
     return (
         <div className="flex-1 flex flex-col h-full bg-white animate-in fade-in duration-200">
             {/* Header */}
-            <div className="h-12 border-b border-zinc-200 flex items-center px-6 shrink-0">
+            <div className="h-12 border-b border-zinc-200 flex items-center px-6 shrink-0 gap-4">
+                <button
+                    onClick={() => navigate(LEGACY_ROUTES.DASHBOARD)}
+                    className="p-1.5 hover:bg-zinc-100 rounded-sm text-zinc-600 transition-colors"
+                    title="返回工作台"
+                >
+                    <ArrowLeft size={16} />
+                </button>
                 <h2 className="text-sm font-bold text-zinc-800 uppercase tracking-wide flex items-center gap-2">
                     <Settings size={14} className="text-zinc-500" /> Settings
                 </h2>
@@ -52,11 +69,10 @@ export function SettingsView() {
                             <button
                                 key={tab.id}
                                 onClick={() => setActiveTab(tab.id)}
-                                className={`flex items-center gap-3 px-3 py-2 text-xs font-medium rounded-sm transition-colors ${
-                                    activeTab === tab.id
-                                        ? 'bg-white border border-zinc-200 text-zinc-900 shadow-sm'
-                                        : 'text-zinc-500 hover:bg-zinc-100'
-                                }`}
+                                className={`flex items-center gap-3 px-3 py-2 text-xs font-medium rounded-sm transition-colors ${activeTab === tab.id
+                                    ? 'bg-white border border-zinc-200 text-zinc-900 shadow-sm'
+                                    : 'text-zinc-500 hover:bg-zinc-100'
+                                    }`}
                             >
                                 <Icon size={14} />
                                 {tab.label}
@@ -110,13 +126,31 @@ export function SettingsView() {
                                             </div>
                                         </div>
                                         <div className="flex bg-zinc-100 rounded-sm p-0.5 border border-zinc-200">
-                                            <button className="px-3 py-1 bg-white border border-zinc-200 shadow-sm rounded-sm text-[10px] font-bold">
+                                            <button
+                                                onClick={() => setTheme('light')}
+                                                className={`px-3 py-1 rounded-sm text-[10px] font-medium transition-colors ${theme === 'light'
+                                                    ? 'bg-white border border-zinc-200 shadow-sm font-bold'
+                                                    : 'text-zinc-500 hover:text-zinc-900'
+                                                    }`}
+                                            >
                                                 Light
                                             </button>
-                                            <button className="px-3 py-1 text-zinc-500 hover:text-zinc-900 text-[10px] font-medium">
+                                            <button
+                                                onClick={() => setTheme('dark')}
+                                                className={`px-3 py-1 rounded-sm text-[10px] font-medium transition-colors ${theme === 'dark'
+                                                    ? 'bg-white border border-zinc-200 shadow-sm font-bold'
+                                                    : 'text-zinc-500 hover:text-zinc-900'
+                                                    }`}
+                                            >
                                                 Dark
                                             </button>
-                                            <button className="px-3 py-1 text-zinc-500 hover:text-zinc-900 text-[10px] font-medium">
+                                            <button
+                                                onClick={() => setTheme('auto')}
+                                                className={`px-3 py-1 rounded-sm text-[10px] font-medium transition-colors ${theme === 'auto'
+                                                    ? 'bg-white border border-zinc-200 shadow-sm font-bold'
+                                                    : 'text-zinc-500 hover:text-zinc-900'
+                                                    }`}
+                                            >
                                                 Auto
                                             </button>
                                         </div>
@@ -245,6 +279,70 @@ export function SettingsView() {
                                             className="w-32"
                                         />
                                     </div>
+                                </div>
+                            </section>
+                        </div>
+                    )}
+
+                    {activeTab === 'ai' && (
+                        <div className="space-y-8">
+                            <section>
+                                <h3 className="text-sm font-bold text-zinc-900 border-b border-zinc-200 pb-2 mb-4">
+                                    AI Configuration
+                                </h3>
+                                <div className="text-[10px] text-zinc-500 mb-4">
+                                    配置本地 AI 引擎。下载模型后即可使用 AI 聊天、文本解释和 RAG 检索功能。
+                                </div>
+                                <ModelManager />
+                            </section>
+                        </div>
+                    )}
+
+                    {activeTab === 'about' && (
+                        <div className="space-y-8">
+                            <section>
+                                <h3 className="text-sm font-bold text-zinc-900 border-b border-zinc-200 pb-2 mb-4">
+                                    Data Statistics
+                                </h3>
+                                <div className="grid grid-cols-3 gap-4">
+                                    <div className="bg-zinc-50 border border-zinc-200 rounded-sm p-4 text-center">
+                                        <div className="text-2xl font-bold text-zinc-900">{cards.length}</div>
+                                        <div className="text-[10px] text-zinc-500 uppercase font-medium">Cards</div>
+                                    </div>
+                                    <div className="bg-zinc-50 border border-zinc-200 rounded-sm p-4 text-center">
+                                        <div className="text-2xl font-bold text-zinc-900">{sources.length}</div>
+                                        <div className="text-[10px] text-zinc-500 uppercase font-medium">Sources</div>
+                                    </div>
+                                    <div className="bg-zinc-50 border border-zinc-200 rounded-sm p-4 text-center">
+                                        <div className="text-2xl font-bold text-zinc-900">{highlights.length}</div>
+                                        <div className="text-[10px] text-zinc-500 uppercase font-medium">Highlights</div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section>
+                                <h3 className="text-sm font-bold text-zinc-900 border-b border-zinc-200 pb-2 mb-4">
+                                    About Zentri
+                                </h3>
+                                <div className="space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-xs text-zinc-500">Version</span>
+                                        <span className="text-xs font-mono text-zinc-800">0.1.0</span>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-xs text-zinc-500">Framework</span>
+                                        <span className="text-xs font-mono text-zinc-800">Tauri 2.0 + React 19</span>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-xs text-zinc-500">Storage</span>
+                                        <span className="text-xs font-mono text-zinc-800">Local JSON + SQLite</span>
+                                    </div>
+                                </div>
+                                <div className="mt-6 pt-4 border-t border-zinc-200">
+                                    <p className="text-[10px] text-zinc-400 leading-relaxed">
+                                        Zentri is a local-first knowledge management application built for researchers and lifelong learners.
+                                        Your data stays on your machine.
+                                    </p>
                                 </div>
                             </section>
                         </div>

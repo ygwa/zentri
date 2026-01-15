@@ -24,6 +24,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-log = "2"
 tauri-plugin-os = "2"
+tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -63,13 +64,27 @@ notify = "6"
 notify-debouncer-mini = "0.4"
 
 # 异步运行时
-tokio = { version = "1", features = ["sync", "rt"] }
+tokio = { version = "1", features = ["full", "process"] }
 
 # 网页阅读器 - 网页抓取与清洗
-reqwest = { version = "0.12", features = ["blocking"] }
+reqwest = { version = "0.12", features = ["blocking", "stream", "json"] }
 readability = "0.3"
 scraper = "0.22"
 url = "2"
+
+# 书籍处理
+zip = "0.6"
+quick-xml = { version = "0.31", features = ["serialize"] }
+roxmltree = "0.18"
+image = "0.25"
+ammonia = "4.0"
+# pdfium-render = "0.8"  # PDF 处理后续实现
+
+# 序列化
+bincode = "1"
+
+# 异步流处理
+futures-util = "0.3"
 
 # 测试依赖
 [dev-dependencies]

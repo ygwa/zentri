@@ -19,10 +19,11 @@
         "minWidth": 800,
         "minHeight": 600,
         "resizable": true,
-        "center": true
+        "titleBarStyle": "Overlay"
       }
     ],
     "security": {
+    
       "csp": null,
       "assetProtocol": {
         "enable": true,
@@ -46,7 +47,9 @@
       "icons/icon.ico"
     ],
     "resources": [],
-    "externalBin": [],
+    "externalBin": [
+      "binaries/llama-server"
+    ],
     "copyright": "Copyright © 2024 maiglis",
     "category": "Productivity",
     "shortDescription": "知识管理应用",

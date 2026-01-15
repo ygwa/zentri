@@ -3,7 +3,6 @@
 
 use crate::models::{CardSearchResult, CardType};
 use crate::state::AppState;
-use crate::storage;
 use tauri::State;
 
 /// 搜索卡片
@@ -137,48 +136,49 @@ pub fn search_by_type(
 /// 同步索引 (全量重建)
 #[tauri::command]
 pub async fn sync_index(state: State<'_, AppState>) -> Result<usize, String> {
-    let (vault_path, indexer) = {
-        let path_guard = state.vault_path.lock().unwrap();
-        let path = path_guard.clone().ok_or("Vault path not set")?;
-
+    let indexer = {
         let indexer_guard = state.indexer.lock().unwrap();
-        let indexer = indexer_guard.clone().ok_or("Indexer not initialized")?;
-        (path, indexer)
+        indexer_guard.clone().ok_or("Indexer not initialized")?
     };
 
     // 获取所有卡片
-    let cards = storage::read_all_cards(&vault_path);
+    let services = state.get_services().ok_or("Vault not initialized")?;
+    let cards = services.card.get_all().await.map_err(|e| e.to_string())?;
     let mut count = 0;
 
-    for card_item in cards {
-        // 读取完整卡片内容
-        if let Some(card) = storage::read_card(&vault_path, &card_item.id) {
-            let should_index = match indexer.get_doc_mtime(&card.id) {
-                Ok(Some(indexed_mtime)) => card.modified_at > indexed_mtime,
-                Ok(None) => true,
-                Err(_) => true,
-            };
+    // 准备用于图谱重建的卡片列表
+    let mut card_list = Vec::new();
 
-            if should_index {
-                indexer
-                    .index_doc_with_type(
-                        &card.id,
-                        &card.title,
-                        &card.plain_text, // 使用纯文本内容
-                        &card.tags,
-                        &card.path,
-                        card.modified_at,
-                        Some(card.card_type.as_str()),
-                    )
-                    .map_err(|e| e.to_string())?;
-                count += 1;
-            }
+    for card in cards.iter() {
+        let should_index = match indexer.get_doc_mtime(&card.id) {
+            Ok(Some(indexed_mtime)) => card.modified_at > indexed_mtime,
+            Ok(None) => true,
+            Err(_) => true,
+        };
+
+        if should_index {
+            let path = card.path.as_ref().map(|p| p.as_str()).unwrap_or("");
+            indexer
+                .index_doc_with_type(
+                    &card.id,
+                    &card.title,
+                    &card.plain_text, // 使用纯文本内容
+                    &card.tags,
+                    path,
+                    card.modified_at,
+                    Some(card.card_type.as_str()),
+                )
+                .map_err(|e| e.to_string())?;
+            count += 1;
         }
+        
+        // 添加到图谱列表
+        card_list.push(card.clone().into());
     }
 
     // 同时重建图谱
     if let Some(graph_engine) = state.graph_engine.lock().unwrap().as_ref() {
-        graph_engine.rebuild();
+        graph_engine.rebuild_with_cards(card_list);
     }
 
     Ok(count)

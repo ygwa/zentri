@@ -121,12 +121,13 @@ export async function pickFile(
 }
 
 /**
- * 选择 EPUB 或 PDF 文件
+ * 选择可阅读的电子书文件
+ * 支持：EPUB, MOBI, AZW3, FB2, CBZ, PDF
  */
 export async function pickReadableFile(): Promise<FilePickerResult | null> {
   return pickFile({
-    title: "选择文档文件",
-    extensions: ["epub", "pdf"],
+    title: "选择电子书文件",
+    extensions: ["epub", "mobi", "azw3", "azw", "fb2", "cbz", "cbr", "pdf"],
   });
 }
 

@@ -1,5 +1,96 @@
 @import "tailwindcss";
 
+/* ============================================
+   原生感交互：抹掉"浏览器"痕迹
+   ============================================ */
+
+/* 禁止用户选中 UI 文字（但笔记区域要允许选中） */
+body {
+  user-select: none;
+  cursor: default;
+  background-color: #ccc;
+}
+
+/* 允许笔记编辑区域选中文字 */
+[contenteditable="true"],
+.editor-content,
+.ProseMirror,
+[data-editable="true"] {
+  user-select: text;
+  cursor: text;
+}
+
+/* 移除移动端或 Webview 的默认点击高亮 */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 针对阅读器：禁用系统自带的"橡皮筋"回弹效果（尤其是 macOS） */
+html, body {
+  overflow: hidden;
+  overscroll-behavior: none; /* 彻底禁止页面滚动到尽头时的回弹 */
+}
+
+/* 确保应用容器可以滚动（如果需要） */
+#root {
+  overflow: auto;
+  height: 100vh;
+}
+
+/* Tauri 窗口拖拽区域 - 全局支持所有平台 */
+[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 禁用拖拽的元素（如按钮） */
+[data-tauri-drag-region="false"] {
+  -webkit-app-region: no-drag;
+}
+
+/* 安全区域支持 - 用于 Overlay 标题栏模式 */
+.safe-area-top {
+  /* 使用 CSS 环境变量支持安全区域 */
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* macOS: 隐藏系统标题栏文字，只保留原生交通灯按钮 */
+@supports (-webkit-appearance: none) {
+  /* macOS 特定样式 */
+  body[data-platform="darwin"] {
+    padding-top: 0;
+  }
+  
+  /* macOS 标题栏区域优化 */
+  .safe-area-top {
+    /* macOS 上标题栏高度通常为 28-32px，包含安全区域 */
+    min-height: calc(28px + env(safe-area-inset-top, 0px));
+  }
+}
+
+/* Windows/Linux 标题栏区域优化 */
+body[data-platform="windows"] .safe-area-top,
+body[data-platform="linux"] .safe-area-top {
+  min-height: calc(28px + env(safe-area-inset-top, 0px));
+}
+
+/* 全局应用原生字体栈 */
+body {
+  font-family: var(--font-sans);
+}
+
+/* 优化动画：使用原生感的缓动曲线 */
+* {
+  transition-timing-function: var(--ease-native);
+}
+
+/* 窗口阴影和圆角优化（Windows 11 自动处理，但需要确保无白边） */
+#root {
+  border-radius: 0; /* Tauri 窗口会自动处理圆角 */
+  box-shadow: none; /* 窗口阴影由系统处理 */
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -38,50 +129,53 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  /* 适合中英文写作的衬线字体栈 */
-  --font-serif: 'PingFang SC', 'PingFang TC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Source Han Serif SC', 'Source Han Serif TC', 'Noto Serif SC', 'Noto Serif TC', 'STSong', 'SimSun', 'Georgia', 'Times New Roman', serif;
 }
 
 :root {
   --radius: 0.625rem;
-  /* 专业感配色：冷灰背景，沉稳色调 */
-  --background: oklch(0.965 0.004 250);  /* 偏蓝冷灰 */
-  --foreground: oklch(0.18 0.01 265);
-  /* 卡片：略带暖调的纯白 */
-  --card: oklch(0.995 0.002 85);
-  --card-foreground: oklch(0.18 0.01 265);
-  /* 数字等宽字体 */
+  /* 建议1: 加深背景色为冷灰(#EEF1F5)，让卡片更明显地"浮"起来 */
+  --background: oklch(0.945 0.006 265);
+  --foreground: oklch(0.141 0.005 285.823);
+  /* 建议1: 卡片保持纯白，带极微暖调 */
+  --card: oklch(0.998 0.002 90);
+  --card-foreground: oklch(0.141 0.005 285.823);
+  /* 原生字体栈：优先使用系统字体，让软件感觉是系统的一部分 */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* 建议5: 数字等宽字体 - 使用更优雅的字体组合 */
   --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", ui-monospace, monospace;
   --font-tabular: "Inter var", "DIN Alternate", system-ui, sans-serif;
-  --popover: oklch(0.995 0.002 85);
-  --popover-foreground: oklch(0.18 0.01 265);
-  /* 主色调：更深沉的蓝 */
-  --primary: oklch(0.48 0.12 250);
+  
+  /* iOS 风格的动画曲线：提升软件的"重量感" */
+  --ease-native: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out-native: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in-native: cubic-bezier(0.4, 0, 1, 1);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.141 0.005 285.823);
+  --primary: oklch(0.45 0.15 250);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.955 0.003 250);
-  --secondary-foreground: oklch(0.25 0.01 265);
-  --muted: oklch(0.955 0.003 250);
-  --muted-foreground: oklch(0.5 0.015 250);
-  --accent: oklch(0.955 0.003 250);
-  --accent-foreground: oklch(0.25 0.01 265);
-  --destructive: oklch(0.55 0.2 25);
-  --border: oklch(0.91 0.004 250);
-  --input: oklch(0.91 0.004 250);
-  --ring: oklch(0.55 0.1 250);
-  /* 图表色：降低饱和度 */
-  --chart-1: oklch(0.62 0.15 45);
-  --chart-2: oklch(0.58 0.1 180);
-  --chart-3: oklch(0.45 0.06 230);
-  --chart-4: oklch(0.75 0.12 85);
-  --chart-5: oklch(0.7 0.12 70);
-  --sidebar: oklch(0.99 0.002 250);
-  --sidebar-foreground: oklch(0.18 0.01 265);
-  --sidebar-primary: oklch(0.25 0.01 265);
+  --secondary: oklch(0.96 0.002 265);
+  --secondary-foreground: oklch(0.21 0.006 285.885);
+  --muted: oklch(0.96 0.002 265);
+  --muted-foreground: oklch(0.5 0.02 265);
+  --accent: oklch(0.96 0.002 265);
+  --accent-foreground: oklch(0.21 0.006 285.885);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.9 0.005 265);
+  --input: oklch(0.9 0.005 265);
+  --ring: oklch(0.55 0.12 250);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.141 0.005 285.823);
+  --sidebar-primary: oklch(0.21 0.006 285.885);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.96 0.003 250);
-  --sidebar-accent-foreground: oklch(0.25 0.01 265);
-  --sidebar-border: oklch(0.92 0.003 250);
-  --sidebar-ring: oklch(0.7 0.01 250);
+  --sidebar-accent: oklch(0.967 0.001 286.375);
+  --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
+  --sidebar-border: oklch(0.92 0.004 286.32);
+  --sidebar-ring: oklch(0.705 0.015 286.067);
 }
 
 .dark {
@@ -153,8 +247,151 @@
   /* 禁止拖拽图片等元素 */
   img:not(.draggable) {
     -webkit-user-drag: none;
-    user-drag: none;
   }
+}
+
+/* ==================== 自定义滚动条样式 ==================== */
+
+/* Firefox 滚动条样式 - 默认隐藏，hover时显示 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.2s ease;
+}
+
+.scrollbar-hover {
+  scrollbar-color: oklch(0.7 0.02 265 / 0.4) transparent !important;
+}
+
+.dark .scrollbar-hover {
+  scrollbar-color: oklch(0.5 0.02 265 / 0.5) transparent !important;
+}
+
+/* Webkit 浏览器 (Chrome, Safari, Edge) - 更细的滚动条，默认隐藏，hover时显示 */
+/* 强制隐藏滚动条，覆盖 macOS 系统默认样式 */
+::-webkit-scrollbar {
+  width: 6px !important;
+  height: 6px !important;
+  -webkit-appearance: none !important;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent !important;
+  border-radius: 6px;
+}
+
+/* 默认滚动条完全透明 - 强制隐藏（macOS 兼容） */
+::-webkit-scrollbar-thumb {
+  background: transparent !important;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  transition: background 0.2s ease, opacity 0.2s ease;
+  opacity: 0 !important;
+  visibility: hidden;
+}
+
+/* 当鼠标悬停在滚动条上时显示 */
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.6 0.03 265 / 0.6) !important;
+  background-clip: padding-box;
+  opacity: 1 !important;
+  visibility: visible;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: oklch(0.5 0.04 265 / 0.8) !important;
+  background-clip: padding-box;
+  opacity: 1 !important;
+  visibility: visible;
+}
+
+/* 使用包装类实现父元素hover时显示滚动条 */
+/* 通过JavaScript添加.scrollbar-hover类来控制显示 */
+.scrollbar-hover ::-webkit-scrollbar-thumb {
+  background: oklch(0.7 0.02 265 / 0.4) !important;
+  opacity: 1 !important;
+  visibility: visible;
+}
+
+.scrollbar-hover ::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.6 0.03 265 / 0.6) !important;
+  opacity: 1 !important;
+  visibility: visible;
+}
+
+/* 暗色模式滚动条 */
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.6 0.03 265 / 0.7) !important;
+  opacity: 1 !important;
+  visibility: visible;
+}
+
+.dark ::-webkit-scrollbar-thumb:active {
+  background: oklch(0.7 0.04 265 / 0.9) !important;
+  opacity: 1 !important;
+  visibility: visible;
+}
+
+.dark .scrollbar-hover ::-webkit-scrollbar-thumb {
+  background: oklch(0.5 0.02 265 / 0.5) !important;
+  opacity: 1 !important;
+  visibility: visible;
+}
+
+.dark .scrollbar-hover ::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.6 0.03 265 / 0.7) !important;
+  opacity: 1 !important;
+  visibility: visible;
+}
+
+/* 特定区域的滚动条样式 - 更细的滚动条 */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: oklch(0.7 0.02 265 / 0);
+  border-radius: 4px;
+  border: 0.5px solid transparent;
+  background-clip: padding-box;
+  opacity: 0;
+}
+
+.scrollbar-thin:hover::-webkit-scrollbar-thumb {
+  background: oklch(0.7 0.02 265 / 0.3);
+  opacity: 1;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.6 0.03 265 / 0.5) !important;
+  background-clip: padding-box;
+}
+
+.dark .scrollbar-thin::-webkit-scrollbar-thumb {
+  background: oklch(0.5 0.02 265 / 0);
+  opacity: 0;
+}
+
+.dark .scrollbar-thin:hover::-webkit-scrollbar-thumb {
+  background: oklch(0.5 0.02 265 / 0.4);
+  opacity: 1;
+}
+
+.dark .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.6 0.03 265 / 0.6) !important;
+  background-clip: padding-box;
+}
+
+/* 隐藏滚动条但保持滚动功能 */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* 建议5: 数字使用等宽字体提升精密感和"数据感" */
@@ -222,7 +459,7 @@
   border-radius: 0 2px 2px 0;
 }
 
-/* 盒子顶部色条 - 更沉稳的渐变 */
+/* 建议2: 盒子顶部色条 */
 .box-stripe {
   position: relative;
   overflow: hidden;
@@ -234,23 +471,23 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 3px;
+  height: 4px;
 }
 
 .box-stripe-amber::before {
-  background: linear-gradient(90deg, #b45309, #d97706);
+  background: linear-gradient(90deg, #f59e0b, #fbbf24);
 }
 
 .box-stripe-sky::before {
-  background: linear-gradient(90deg, #0369a1, #0284c7);
+  background: linear-gradient(90deg, #0ea5e9, #38bdf8);
 }
 
 .box-stripe-emerald::before {
-  background: linear-gradient(90deg, #047857, #059669);
+  background: linear-gradient(90deg, #10b981, #34d399);
 }
 
 .box-stripe-violet::before {
-  background: linear-gradient(90deg, #6d28d9, #7c3aed);
+  background: linear-gradient(90deg, #8b5cf6, #a78bfa);
 }
 
 /* 建议2: 链接流动可视化 - 点阵图 */
@@ -322,17 +559,17 @@
   }
 }
 
-/* 知识流动桑基图风格 - hover时触发流动效果 */
+/* 建议2: 知识流动桑基图风格 - 更精致的流动效果 */
 .sankey-flow {
   position: relative;
-  height: 6px;
+  height: 8px;
   background: linear-gradient(90deg, 
     transparent 0%, 
-    var(--flow-color, hsl(var(--primary))) 10%,
-    var(--flow-color, hsl(var(--primary))) 90%,
+    var(--flow-color, hsl(var(--primary))) 15%,
+    var(--flow-color, hsl(var(--primary))) 85%,
     transparent 100%
   );
-  border-radius: 3px;
+  border-radius: 4px;
   overflow: hidden;
 }
 
@@ -342,26 +579,26 @@
   inset: 0;
   background: linear-gradient(90deg, 
     rgba(255,255,255,0) 0%,
-    rgba(255,255,255,0.4) 50%,
+    rgba(255,255,255,0.6) 50%,
     rgba(255,255,255,0) 100%
   );
-  transform: translateX(-100%);
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-/* 只在 hover 时触发动画 */
-.sankey-flow:hover::after {
-  animation: sankey-shine 3s ease-in-out infinite;
-  opacity: 1;
+  animation: sankey-shine 2.5s ease-in-out infinite;
 }
 
 @keyframes sankey-shine {
   0% {
     transform: translateX(-100%);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
   }
   100% {
-    transform: translateX(200%);
+    transform: translateX(100%);
+    opacity: 0;
   }
 }
 
@@ -572,34 +809,4 @@
 
 .animate-node-grow {
   animation: node-grow 0.4s ease-out;
-}
-
-/* 首页流动光效动画 - 更慢更柔和 */
-@keyframes flow-slow {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(200%);
-  }
-}
-
-.animate-flow-slow {
-  animation: flow-slow 3s ease-in-out infinite;
-}
-
-/* 首页卡片入场动画 */
-@keyframes card-enter {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-card-enter {
-  animation: card-enter 0.3s ease-out;
 }

@@ -39,18 +39,9 @@ export const createCardsSlice: StateCreator<CardsSlice> = (set, get) => ({
     try {
       if (!api.isTauriEnv()) return;
 
-      const cardsData = await api.cards.getAll();
-      const cards: Card[] = cardsData.map((c) => ({
-        id: c.id,
-        type: c.type,
-        title: c.title,
-        content: { type: "doc", content: [] },
-        tags: c.tags || [],
-        links: c.links || [],
-        sourceId: c.sourceId,
-        createdAt: c.createdAt,
-        updatedAt: c.modifiedAt,
-      }));
+      // getAll() 现在返回包含完整内容的卡片（已经通过 normalizeCardFull 处理）
+      // 直接使用返回的卡片，不再使用占位符
+      const cards = await api.cards.getAll();
 
       set({ cards });
     } catch (err) {
@@ -184,11 +175,32 @@ export const createCardsSlice: StateCreator<CardsSlice> = (set, get) => ({
 
   // Computed
   filteredCards: () => {
-    // 注意：CardsSlice 不包含 currentView 和 searchQuery
-    // 这些应该在调用时传入，或者从外部获取
-    // 这里只返回所有卡片，由调用方进行过滤
-    const { cards } = get();
-    return cards.sort((a, b) => b.updatedAt - a.updatedAt);
+    const state = get() as any;
+    const { cards } = state;
+    const { currentView, searchQuery } = state;
+
+    let filtered = cards;
+
+    // 按类型过滤
+    if (currentView && currentView !== "all") {
+      filtered = filtered.filter((card: Card) => card.type === currentView);
+    }
+
+    // 按搜索词过滤
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (card: Card) => {
+          return (
+            card.title.toLowerCase().includes(query) ||
+            // 简单处理：仅检查 tags
+            card.tags.some((tag: string) => tag.toLowerCase().includes(query))
+          );
+        }
+      );
+    }
+
+    return filtered.sort((a: Card, b: Card) => b.updatedAt - a.updatedAt);
   },
 
   getCardById: (id) => get().cards.find((card) => card.id === id),

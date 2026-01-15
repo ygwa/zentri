@@ -274,10 +274,10 @@ function InboxSection({
             onClick={() => onSelect(card.id)}
           >
             <div className="w-48">
-              <p className="text-sm font-medium line-clamp-2">
+              <h3 className="mb-2 text-base font-semibold leading-tight line-clamp-2">
                 {card.title || "无标题闪念"}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
+              </h3>
+              <p className="text-xs text-muted-foreground">
                 {formatTime(card.updatedAt)}
               </p>
             </div>

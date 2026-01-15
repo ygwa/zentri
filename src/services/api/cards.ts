@@ -2,15 +2,15 @@
  * Card API 模块
  */
 import { invoke } from "@tauri-apps/api/core";
-import type { CardListItem, CardFull, UpdateCardRequest } from "./types";
+import type { CardFull, UpdateCardRequest } from "./types";
 import type { Card, CardType } from "@/types";
 
 /**
- * 获取所有卡片（列表形式，不含完整内容）
+ * 获取所有卡片（包含完整内容）
  */
-export async function getAll(): Promise<CardListItem[]> {
-  const cards = await invoke<CardListItem[]>("get_cards");
-  return cards.map(normalizeCard);
+export async function getAll(): Promise<Card[]> {
+  const cards = await invoke<CardFull[]>("get_cards");
+  return cards.map(normalizeCardFull);
 }
 
 /**
@@ -60,21 +60,7 @@ export { deleteCard as delete };
 
 // ==================== 数据规范化 ====================
 
-function normalizeCard(card: CardListItem): CardListItem {
-  return {
-    id: card.id,
-    path: card.path,
-    title: card.title,
-    tags: card.tags || [],
-    type: card.type,
-    preview: card.preview,
-    createdAt: card.createdAt,
-    modifiedAt: card.modifiedAt,
-    aliases: card.aliases || [],
-    links: card.links || [],
-    sourceId: card.sourceId,
-  };
-}
+
 
 function normalizeCardFull(card: CardFull): Card {
   let content;

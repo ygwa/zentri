@@ -137,9 +137,10 @@ export function TiptapToolbar({ editor }: TiptapToolbarProps) {
         <button 
           className="p-1.5 text-zinc-700 hover:bg-zinc-100 rounded-sm hover:text-black transition-colors" 
           title="Image"
-          onClick={() => {
-            // TODO: 实现图片插入功能
-            console.log("Insert image");
+          onClick={async () => {
+            if (editor && (editor as any).insertImage) {
+              await (editor as any).insertImage();
+            }
           }}
         >
           <ImageIcon size={14}/>

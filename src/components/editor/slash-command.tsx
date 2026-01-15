@@ -151,7 +151,7 @@ const commands: CommandItem[] = [
 interface SlashCommandMenuProps {
   query: string;
   position: { x: number; y: number };
-  onSelect: (command: string) => void;
+  onSelect: (command: string) => void | Promise<void>;
   onClose: () => void;
 }
 

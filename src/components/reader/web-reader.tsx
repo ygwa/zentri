@@ -422,7 +422,7 @@ export function WebReader({
           }}
         >
           <div
-            className="cursor-grab hover:bg-muted p-1 rounded active:cursor-grabbing"
+            className="cursor-grab hover:bg-blue-50 hover:border-blue-200 border border-transparent p-1.5 rounded active:cursor-grabbing transition-all flex items-center gap-1.5 group/drag"
             draggable
             onDragStart={(e) => {
               if (sourceId) {
@@ -438,7 +438,8 @@ export function WebReader({
             }}
             title="拖拽到编辑器以创建引用"
           >
-            <GripVertical className="h-4 w-4 text-muted-foreground" />
+            <GripVertical className="h-4 w-4 text-blue-600 group-hover/drag:text-blue-700" />
+            <span className="text-[10px] font-medium text-blue-600 group-hover/drag:text-blue-700 hidden sm:inline">拖拽</span>
           </div>
           <Button
             variant="ghost"

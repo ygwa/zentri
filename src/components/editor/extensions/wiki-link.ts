@@ -3,7 +3,7 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
 
 export interface WikiLinkOptions {
   HTMLAttributes: Record<string, unknown>;
-  cards: Array<{ id: string; title: string }>;
+  cards: Array<{ id: string; title: string }> | (() => Array<{ id: string; title: string }>);
   onLinkClick?: (id: string) => void;
 }
 
@@ -47,7 +47,7 @@ export const WikiLink = Node.create<WikiLinkOptions>({
       HTMLAttributes: {
         class: "wiki-link-chip",
       },
-      cards: [],
+      cards: [] as Array<{ id: string; title: string }> | (() => Array<{ id: string; title: string }>),
       onLinkClick: undefined,
     };
   },
@@ -111,7 +111,8 @@ export const WikiLink = Node.create<WikiLinkOptions>({
 
           if (!title) return;
 
-          const card = this.options.cards.find(c => c.title === title);
+          const cards = typeof this.options.cards === 'function' ? this.options.cards() : this.options.cards;
+          const card = cards.find((c: any) => c.title === title);
           const exists = !!card;
           const href = card?.id || null;
 
@@ -137,7 +138,8 @@ export const WikiLink = Node.create<WikiLinkOptions>({
 
           if (!title) return;
 
-          const card = this.options.cards.find(c => c.title === title);
+          const cards = typeof this.options.cards === 'function' ? this.options.cards() : this.options.cards;
+          const card = cards.find((c: any) => c.title === title);
           const exists = !!card;
           const href = card?.id || null;
 
@@ -158,7 +160,8 @@ export const WikiLink = Node.create<WikiLinkOptions>({
         const { from, to } = selection;
         
         // 查找卡片以确定 exists 状态
-        const card = this.options.cards.find(c => c.id === attributes.href || c.title === attributes.title);
+        const cards = typeof this.options.cards === 'function' ? this.options.cards() : this.options.cards;
+        const card = cards.find((c: any) => c.id === attributes.href || c.title === attributes.title);
         const exists = !!card;
         
         const node = this.type.create({
@@ -176,7 +179,8 @@ export const WikiLink = Node.create<WikiLinkOptions>({
       },
       insertWikiLink: (attributes: { href: string; title: string }) => ({ state, dispatch }) => {
         // 查找卡片以确定 exists 状态
-        const card = this.options.cards.find(c => c.id === attributes.href || c.title === attributes.title);
+        const cards = typeof this.options.cards === 'function' ? this.options.cards() : this.options.cards;
+        const card = cards.find((c: any) => c.id === attributes.href || c.title === attributes.title);
         const exists = !!card;
         
         const node = this.type.create({

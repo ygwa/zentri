@@ -2,7 +2,7 @@
  * 动态窗口标题 Hook
  * 根据当前页面状态更新窗口标题
  */
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { isTauriEnv } from "@/services/api/utils";
 
 const APP_NAME = "Zentri";
@@ -22,7 +22,14 @@ export async function setWindowTitle(title: string | null) {
     try {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       const currentWindow = getCurrentWindow();
-      await currentWindow.setTitle(fullTitle);
+      
+      // 检测平台
+      const isMacOS = navigator.platform.toLowerCase().includes("mac");
+      
+      // 在 macOS 上，设置空标题以隐藏系统标题栏文字（我们使用自定义标题栏显示居中标题）
+      // 在其他平台上，显示完整标题
+      const windowTitle = isMacOS ? "" : fullTitle;
+      await currentWindow.setTitle(windowTitle);
     } catch (e) {
       console.warn("Failed to set window title:", e);
     }
@@ -71,21 +78,23 @@ export function useWindowTitle({
   selectedCardTitle,
   openedSourceTitle,
 }: UseWindowTitleOptions) {
-  useEffect(() => {
-    let title: string | null = null;
-    
+  // 使用 useMemo 计算最终标题，避免不必要的重新计算
+  const finalTitle = useMemo(() => {
     if (openedSourceTitle) {
       // 优先显示打开的文献源
-      title = openedSourceTitle;
+      return openedSourceTitle;
     } else if (selectedCardTitle) {
       // 其次显示选中的卡片
-      title = selectedCardTitle;
+      return selectedCardTitle;
     } else if (currentView && VIEW_TITLES[currentView]) {
       // 最后显示当前视图
-      title = VIEW_TITLES[currentView];
+      return VIEW_TITLES[currentView];
     }
-    
-    setWindowTitle(title);
+    return null;
   }, [currentView, selectedCardTitle, openedSourceTitle]);
+
+  useEffect(() => {
+    setWindowTitle(finalTitle);
+  }, [finalTitle]);
 }
 

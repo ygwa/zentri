@@ -408,11 +408,48 @@
   margin: 1em 0;
   display: block;
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  transition: transform 0.2s ease;
 }
 
 .zentri-editor-content .editor-image.ProseMirror-selectednode {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
+  cursor: default;
+}
+
+/* 图片包装器（用于添加调整手柄） */
+.zentri-editor-content .editor-image-wrapper {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+/* 图片调整大小手柄 */
+.zentri-editor-content .image-resize-handle {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 20px;
+  height: 20px;
+  background: var(--primary);
+  border: 2px solid white;
+  border-radius: 4px;
+  cursor: nwse-resize;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  z-index: 10;
+  pointer-events: auto;
+  transition: transform 0.15s ease, background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.zentri-editor-content .image-resize-handle:hover {
+  background: color-mix(in oklch, var(--primary) 90%, black);
+  transform: scale(1.15);
+}
+
+/* 调整大小时的视觉反馈 */
+.zentri-editor-content .editor-image.resizing {
+  opacity: 0.9;
+  transition: none;
 }
 
 /* ==================== 表格 - Notion 风格 ==================== */
@@ -520,8 +557,12 @@
 
 /* ==================== 动画效果 ==================== */
 
-.zentri-editor-content * {
-  transition: background-color 0.15s ease;
+/* 只在特定元素上应用 transition，避免影响输入性能 */
+.zentri-editor-content button,
+.zentri-editor-content .wiki-link-chip,
+.zentri-editor-content .editor-link,
+.zentri-editor-content .task-item > label input[type="checkbox"] {
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 /* 菜单动画 */

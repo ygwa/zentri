@@ -343,3 +343,6 @@ export function ProjectNoteEditor({ projectId, onClose }: ProjectNoteEditorProps
   );
 }
 
+
+
+

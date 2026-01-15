@@ -35,7 +35,13 @@ export async function create(data: Omit<Highlight, "id" | "createdAt">): Promise
     cardId: data.cardId,
     content: data.content,
     note: data.note,
-    position: data.position,
+    type: data.type,
+    position: data.position ? {
+      page: data.position.page,
+      chapter: data.position.chapter,
+      startOffset: typeof data.position.startOffset === 'string' ? parseInt(data.position.startOffset, 10) : data.position.startOffset,
+      endOffset: typeof data.position.endOffset === 'string' ? parseInt(data.position.endOffset, 10) : data.position.endOffset,
+    } : undefined,
     color: data.color,
   };
   return await invoke<Highlight>("create_highlight", { req });

@@ -5,6 +5,9 @@
 
 export * from "./types";
 export * from "./utils";
+export * as ai from "./ai";
+export * as assets from "./assets";
+export * as bookmarks from "./bookmarks";
 export * as cards from "./cards";
 export * as sources from "./sources";
 export * as highlights from "./highlights";

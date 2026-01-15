@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import type { Editor } from "@tiptap/react";
+import type { JSONContent } from "@tiptap/core";
 import {
   Bold,
   Italic,
@@ -16,11 +17,13 @@ import {
   Unlink,
   Check,
   X,
+  StickyNote,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface BubbleToolbarProps {
   editor: Editor;
+  onCreateFleetingNote?: (content: JSONContent) => void;
 }
 
 interface ToolbarButtonProps {
@@ -54,15 +57,39 @@ function Divider() {
   return <div className="w-px h-5 bg-border/50 mx-0.5" />;
 }
 
-export function BubbleToolbar({ editor }: BubbleToolbarProps) {
+export function BubbleToolbar({ editor, onCreateFleetingNote }: BubbleToolbarProps) {
   const [linkUrl, setLinkUrl] = useState("");
   const [showLinkInput, setShowLinkInput] = useState(false);
 
+  // 处理创建闪念笔记
+  const handleCreateFleetingNote = useCallback(() => {
+    if (!onCreateFleetingNote) return;
+    
+    const { selection } = editor.state;
+    const { from, to } = selection;
+    
+    // 如果没有选中内容，不执行
+    if (from === to) return;
+    
+    // 获取选中内容的 JSON
+    const selectedContent = editor.state.doc.slice(from, to);
+    const jsonContent: JSONContent = {
+      type: "doc",
+      content: selectedContent.content.toJSON(),
+    };
+    
+    // 调用回调
+    onCreateFleetingNote(jsonContent);
+    
+    // 保持编辑器焦点
+    editor.commands.focus();
+  }, [editor, onCreateFleetingNote]);
+
   const setLink = useCallback(() => {
-    if (linkUrl) {
+    if (linkUrl.trim()) {
       // 确保 URL 有协议
-      let href = linkUrl;
-      if (!/^https?:\/\//.test(href)) {
+      let href = linkUrl.trim();
+      if (!/^https?:\/\//.test(href) && !href.startsWith("mailto:") && !href.startsWith("#")) {
         href = `https://${href}`;
       }
       editor
@@ -74,6 +101,8 @@ export function BubbleToolbar({ editor }: BubbleToolbarProps) {
     }
     setShowLinkInput(false);
     setLinkUrl("");
+    // 保持焦点在编辑器
+    editor.commands.focus();
   }, [editor, linkUrl]);
 
   const unsetLink = useCallback(() => {
@@ -85,8 +114,11 @@ export function BubbleToolbar({ editor }: BubbleToolbarProps) {
       e.preventDefault();
       setLink();
     } else if (e.key === "Escape") {
+      e.preventDefault();
       setShowLinkInput(false);
       setLinkUrl("");
+      // 恢复编辑器焦点
+      editor.commands.focus();
     }
   };
 
@@ -199,7 +231,7 @@ export function BubbleToolbar({ editor }: BubbleToolbarProps) {
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
         isActive={editor.isActive("heading", { level: 1 })}
-        title="标题 1"
+        title="标题 1 (# 空格)"
       >
         <Heading1 className="h-4 w-4" />
       </ToolbarButton>
@@ -207,7 +239,7 @@ export function BubbleToolbar({ editor }: BubbleToolbarProps) {
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
         isActive={editor.isActive("heading", { level: 2 })}
-        title="标题 2"
+        title="标题 2 (## 空格)"
       >
         <Heading2 className="h-4 w-4" />
       </ToolbarButton>
@@ -215,7 +247,7 @@ export function BubbleToolbar({ editor }: BubbleToolbarProps) {
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
         isActive={editor.isActive("heading", { level: 3 })}
-        title="标题 3"
+        title="标题 3 (### 空格)"
       >
         <Heading3 className="h-4 w-4" />
       </ToolbarButton>
@@ -226,7 +258,7 @@ export function BubbleToolbar({ editor }: BubbleToolbarProps) {
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleBlockquote().run()}
         isActive={editor.isActive("blockquote")}
-        title="引用"
+        title="引用 (> 空格)"
       >
         <Quote className="h-4 w-4" />
       </ToolbarButton>
@@ -234,7 +266,7 @@ export function BubbleToolbar({ editor }: BubbleToolbarProps) {
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleBulletList().run()}
         isActive={editor.isActive("bulletList")}
-        title="无序列表"
+        title="无序列表 (- 空格)"
       >
         <List className="h-4 w-4" />
       </ToolbarButton>
@@ -242,10 +274,23 @@ export function BubbleToolbar({ editor }: BubbleToolbarProps) {
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleOrderedList().run()}
         isActive={editor.isActive("orderedList")}
-        title="有序列表"
+        title="有序列表 (1. 空格)"
       >
         <ListOrdered className="h-4 w-4" />
       </ToolbarButton>
+
+      <Divider />
+
+      {/* 创建闪念笔记 */}
+      {onCreateFleetingNote && (
+        <ToolbarButton
+          onClick={handleCreateFleetingNote}
+          isActive={false}
+          title="创建闪念笔记"
+        >
+          <StickyNote className="h-4 w-4" />
+        </ToolbarButton>
+      )}
     </div>
   );
 }

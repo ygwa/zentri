@@ -43,6 +43,42 @@ export function hasCardContent(content: EditorContent | string | null | undefine
 }
 
 /**
+ * 过滤无意义字符（如随机字符串、乱码等）
+ */
+function filterMeaninglessText(text: string): string {
+  // 移除连续重复的字符（如 "aaaa", "1111"）
+  text = text.replace(/(.)\1{3,}/g, '');
+  
+  // 移除只有数字和特殊字符的片段（如 "fewfaw1231"）
+  text = text.replace(/\b[a-z]{2,}[0-9]+[a-z]*\b/gi, '');
+  text = text.replace(/\b[0-9]+[a-z]{2,}[0-9]*\b/gi, '');
+  
+  // 移除过短的单词片段（可能是乱码）
+  text = text.replace(/\b[a-z]{1,2}\d+\b/gi, '');
+  
+  return text;
+}
+
+/**
+ * 提取第一段有效文字
+ */
+function extractFirstMeaningfulParagraph(text: string): string {
+  // 按段落分割（句号、问号、感叹号、换行）
+  const paragraphs = text.split(/[。！？\n]+/).filter(p => p.trim().length > 0);
+  
+  for (const para of paragraphs) {
+    const cleaned = filterMeaninglessText(para.trim());
+    // 如果段落长度合理（至少10个字符）且包含有意义的内容
+    if (cleaned.length >= 10 && /[\u4e00-\u9fa5a-zA-Z]/.test(cleaned)) {
+      return cleaned;
+    }
+  }
+  
+  // 如果没有找到有效段落，返回过滤后的原始文本
+  return filterMeaninglessText(text.trim());
+}
+
+/**
  * 从编辑器内容中提取纯文本预览
  * 支持 JSON 格式和旧的 HTML/Markdown 字符串格式
  */
@@ -55,10 +91,13 @@ export function getContentPreview(content: EditorContent | string | null | undef
     if (!text.trim()) return "暂无内容";
     
     const cleaned = text.replace(/\s+/g, " ").trim();
-    if (cleaned.length > maxLength) {
-      return cleaned.slice(0, maxLength) + "...";
+    // 提取第一段有效文字
+    const meaningful = extractFirstMeaningfulParagraph(cleaned);
+    
+    if (meaningful.length > maxLength) {
+      return meaningful.slice(0, maxLength) + "...";
     }
-    return cleaned;
+    return meaningful || "暂无内容";
   }
 
   // 旧的字符串格式处理

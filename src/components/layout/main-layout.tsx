@@ -1,68 +1,53 @@
 import { useState, useEffect, useCallback } from "react";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
     Layout,
     BookOpen,
     GitGraph,
     Settings,
-    Plus,
-    Search,
     Command,
     Repeat,
     Hash,
-    FolderOpen,
-    ChevronDown,
-    LayoutGrid
+    CalendarDays,
+    Sparkles
 } from "lucide-react";
 import { CommandPalette } from "@/components/command-palette";
-import { VaultSwitcherDialog } from "@/components/vault-switcher-dialog";
+import { WindowTitleBar } from "@/components/window-title-bar";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store";
 import { readerNavigation, type NavigationTarget } from "@/lib/reader-navigation";
 import { useWindowTitle } from "@/hooks/use-window-title";
+import { getCardRoute } from "@/lib/card-routes";
+import { LEGACY_ROUTES } from "@/router/constants";
 
-// Views
-import { DashboardView } from "@/components/views/dashboard-view";
-import { LibraryView } from "@/components/views/library-view";
-import { GraphViewFull } from "@/components/views/graph-view-full";
+// Views (only for overlays)
 import { ReaderView } from "@/components/views/reader-view";
-import { ProjectEditorView } from "@/components/views/project-editor-view";
-import { NoteEditorView } from "@/components/views/note-editor-view";
-import { SettingsView } from "@/components/views/settings-view";
-import { TagsView } from "@/components/views/tags-view";
-import { ReviewView } from "@/components/views/review-view";
-import { CanvasGridView } from "@/components/views/canvas-grid-view";
-import { CanvasEditorView } from "@/components/views/canvas-editor-view";
-
-type ViewMode = "dashboard" | "library" | "graph" | "review" | "tags" | "settings" | "boards";
-
-// 用于传递给 ReaderView 的导航目标
-interface ReaderNavigationState {
-    page?: number;
-    cfi?: string;
-    selector?: string;
-}
 
 export function MainLayout() {
-    const [activeView, setActiveView] = useState<ViewMode>("dashboard");
-    const [editingCardId, setEditingCardId] = useState<string | null>(null);
-    const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
-    const [editingCanvasId, setEditingCanvasId] = useState<string | null>(null);
+    const location = useLocation();
+    const navigate = useNavigate();
     const [readingSource, setReadingSource] = useState<string | null>(null);
-    const [readerNavState, setReaderNavState] = useState<ReaderNavigationState | null>(null);
     const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
-    const [isVaultSwitcherOpen, setIsVaultSwitcherOpen] = useState(false);
     const { getSourceById, getCardById, selectedCardId, vaultPath } = useAppStore();
 
-    // 获取当前标题信息（优先级：打开的文献源 > 编辑的卡片/项目 > 选中的卡片 > 当前视图）
+    // 从路径获取当前视图
+    const currentView = location.pathname.split('/').pop() || 'dashboard';
+
+    // 从路由中获取当前卡片信息
+    const pathParts = location.pathname.split('/').filter(Boolean);
+    const currentCardId = pathParts[0] === 'permanent' || pathParts[0] === 'project' || pathParts[0] === 'card'
+        ? pathParts[1]
+        : null;
+
+    // 获取当前标题信息（优先级：打开的文献源 > 路由中的卡片 > 选中的卡片 > 当前视图）
     const currentSource = readingSource ? getSourceById(readingSource) : null;
-    const currentCard = editingCardId ? getCardById(editingCardId) : null;
-    const currentProject = editingProjectId ? getCardById(editingProjectId) : null;
-    const selectedCard = selectedCardId && !editingCardId ? getCardById(selectedCardId) : null;
+    const currentCard = currentCardId ? getCardById(currentCardId) : null;
+    const selectedCard = selectedCardId && !currentCardId ? getCardById(selectedCardId) : null;
 
     // 更新窗口标题（系统标题栏）
     useWindowTitle({
-        currentView: activeView,
-        selectedCardTitle: currentCard?.title || currentProject?.title || selectedCard?.title || null,
+        currentView: currentView as any,
+        selectedCardTitle: currentCard?.title || selectedCard?.title || null,
         openedSourceTitle: currentSource?.title || null,
     });
 
@@ -72,11 +57,6 @@ export function MainLayout() {
 
         // 打开阅读器并跳转到指定位置
         setReadingSource(target.sourceId);
-        setReaderNavState({
-            page: target.page,
-            cfi: target.cfi,
-            selector: target.selector,
-        });
     }, []);
 
     // 注册导航处理器
@@ -99,93 +79,86 @@ export function MainLayout() {
     }, []);
 
     const handleOpenCard = (id: string) => {
-        setEditingCardId(id);
-    };
-
-    const handleOpenProject = (id: string) => {
-        setEditingProjectId(id);
-        setActiveView("dashboard"); // 确保在dashboard视图
-    };
-
-    const handleReadSource = (source: { id: string }) => {
-        setReadingSource(source.id);
-    };
-
-    const handleOpenCanvas = (id: string) => {
-        setEditingCanvasId(id);
-    };
-
-    const renderContent = () => {
-        switch (activeView) {
-            case "library":
-                return <LibraryView onRead={handleReadSource} />;
-            case "boards":
-                return <CanvasGridView onOpenCanvas={handleOpenCanvas} />;
-            case "graph":
-                return <GraphViewFull />;
-            case "review":
-                return <ReviewView />;
-            case "tags":
-                return <TagsView />;
-            case "settings":
-                return <SettingsView />;
-            case "dashboard":
-            default:
-                return (
-                    <DashboardView
-                        onOpenCard={handleOpenCard}
-                        onOpenProject={handleOpenProject}
-                    />
-                );
+        const card = getCardById(id);
+        if (card) {
+            // 根据卡片类型导航到对应的路由
+            navigate(getCardRoute(card.type, id));
+        } else {
+            // 如果卡片不存在，使用默认路由
+            navigate(LEGACY_ROUTES.CARD(id));
         }
     };
 
+    // 移除查询参数监听，现在使用路由导航
+
+    // 从 vaultPath 提取 vault 名称作为标题
+    const getVaultName = (): string => {
+        if (!vaultPath) return "KNOWLEDGE_BASE";
+        const parts = vaultPath.split(/[/\\]/).filter(Boolean);
+        const vaultName = parts[parts.length - 1] || "KNOWLEDGE_BASE";
+        return vaultName.toUpperCase().replace(/[\s-]/g, "_");
+    };
+
+    const vaultName = getVaultName();
+
     return (
-        <div className="flex flex-col h-screen w-screen bg-[#18181b] text-zinc-900 font-sans overflow-hidden">
+        <div className="flex flex-col h-screen w-screen bg-white text-zinc-900 font-sans overflow-hidden">
+            {/* 自定义窗口标题栏（Windows/Linux，macOS 上会自动隐藏） */}
+            <WindowTitleBar 
+                title={vaultName}
+                onSearchClick={() => setIsCommandPaletteOpen(true)}
+            />
+            
             {/* Top Main Area */}
             <div className="flex-1 flex overflow-hidden relative">
 
                 {/* Sidebar */}
-                <aside className="w-14 h-full bg-[#111113] flex flex-col items-center py-4 border-r border-[#27272a] shrink-0 z-50 text-gray-400">
-                    <div className="w-8 h-8 bg-blue-700 rounded-sm flex items-center justify-center text-white font-bold mb-6 cursor-pointer hover:bg-blue-600 transition-colors font-mono tracking-tighter" onClick={() => setActiveView("dashboard")}>
+                <aside className="w-14 h-full bg-zinc-50 flex flex-col items-center py-4 border-r border-zinc-200 shrink-0 z-50 text-gray-500">
+                    <div className="w-8 h-8 bg-blue-700 rounded-sm flex items-center justify-center text-white font-bold mb-6 cursor-pointer hover:bg-blue-600 transition-colors font-mono tracking-tighter" onClick={() => navigate(LEGACY_ROUTES.DASHBOARD)}>
                         Z_
                     </div>
                     <div className="flex flex-col w-full items-center gap-4 p-2">
                         <NavIcon
                             icon={Layout}
-                            active={activeView === "dashboard"}
-                            onClick={() => setActiveView("dashboard")}
+                            active={currentView === "dashboard"}
+                            onClick={() => navigate(LEGACY_ROUTES.DASHBOARD)}
                             tooltip="工作台 (Cmd+1)"
                         />
                         <NavIcon
                             icon={BookOpen}
-                            active={activeView === "library"}
-                            onClick={() => setActiveView("library")}
+                            active={currentView === "library"}
+                            onClick={() => navigate(LEGACY_ROUTES.LIBRARY)}
                             tooltip="书架 (Cmd+2)"
                         />
                         <NavIcon
-                            icon={LayoutGrid}
-                            active={activeView === "boards"}
-                            onClick={() => setActiveView("boards")}
-                            tooltip="白板"
-                        />
-                        <NavIcon
                             icon={GitGraph}
-                            active={activeView === "graph"}
-                            onClick={() => setActiveView("graph")}
+                            active={currentView === "graph"}
+                            onClick={() => navigate(LEGACY_ROUTES.GRAPH)}
                             tooltip="图谱 (Cmd+3)"
                         />
                         <NavIcon
+                            icon={CalendarDays}
+                            active={currentView === "boards"}
+                            onClick={() => navigate(LEGACY_ROUTES.BOARDS)}
+                            tooltip="看板 (Cmd+4)"
+                        />
+                        <NavIcon
                             icon={Repeat}
-                            active={activeView === "review"}
-                            onClick={() => setActiveView("review")}
+                            active={currentView === "review"}
+                            onClick={() => navigate(LEGACY_ROUTES.REVIEW)}
                             tooltip="回顾 (Cmd+4)"
                         />
                         <NavIcon
                             icon={Hash}
-                            active={activeView === "tags"}
-                            onClick={() => setActiveView("tags")}
+                            active={currentView === "tags"}
+                            onClick={() => navigate(LEGACY_ROUTES.TAGS)}
                             tooltip="标签 (Cmd+5)"
+                        />
+                        <NavIcon
+                            icon={Sparkles}
+                            active={currentView === "ai-chat"}
+                            onClick={() => navigate(LEGACY_ROUTES.AI_CHAT)}
+                            tooltip="AI 聊天"
                         />
                     </div>
                     <div className="mt-auto flex flex-col space-y-4 w-full items-center pb-2">
@@ -196,8 +169,8 @@ export function MainLayout() {
                         />
                         <NavIcon
                             icon={Settings}
-                            active={activeView === "settings"}
-                            onClick={() => setActiveView("settings")}
+                            active={currentView === "settings"}
+                            onClick={() => navigate(LEGACY_ROUTES.SETTINGS)}
                             tooltip="设置"
                         />
                         <div className="w-6 h-6 rounded-sm bg-zinc-800 border border-zinc-700 text-[9px] flex items-center justify-center text-zinc-400 font-mono">JS</div>
@@ -205,65 +178,10 @@ export function MainLayout() {
                 </aside>
 
                 <div className="flex-1 flex flex-col min-w-0 bg-white relative">
-                    {/* Header */}
-                    <header className="h-10 bg-white border-b border-zinc-200 flex items-center px-4 justify-between shrink-0 select-none">
-                        <div className="flex items-center space-x-2 text-xs">
-                            <div className="flex items-center gap-1.5 px-2 py-1">
-                                <FolderOpen size={12} className="text-zinc-500" />
-                                <span className="font-bold text-zinc-800 tracking-tight">知识库</span>
-                                <span className="text-zinc-300">/</span>
-                                <span className="text-zinc-600 flex items-center gap-1 font-medium font-mono max-w-[200px] truncate" title={vaultPath || ""}>
-                                    {vaultPath
-                                        ? (() => {
-                                            const parts = vaultPath.split(/[/\\]/);
-                                            return parts[parts.length - 1] || "Vault";
-                                        })()
-                                        : "未设置"
-                                    }
-                                </span>
-                            </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                            <div
-                                onClick={() => setIsCommandPaletteOpen(true)}
-                                className="flex items-center px-2 py-1 bg-zinc-50 rounded-sm border border-zinc-200 w-64 group focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500/20 transition-all cursor-pointer hover:bg-zinc-100 text-zinc-500"
-                            >
-                                <Search size={12} className="mr-2" />
-                                <span className="bg-transparent border-none text-xs flex-1 placeholder-zinc-400 font-medium select-none">
-                                    Search knowledge graph...
-                                </span>
-                                <span className="text-[9px] text-zinc-400 border border-zinc-300 rounded-sm px-1 font-mono bg-zinc-100 flex items-center">
-                                    <Command size={8} className="mr-0.5" />K
-                                </span>
-                            </div>
-                            <button className="flex items-center gap-1 px-2 py-1 bg-zinc-900 text-white rounded-sm text-xs hover:bg-zinc-800 shadow-sm border border-zinc-900 font-medium transition-all active:translate-y-px">
-                                <Plus size={12} /> <span className="font-medium">New Node</span>
-                            </button>
-                        </div>
-                    </header>
-
                     {/* Viewport */}
                     <div className="flex-1 overflow-hidden relative bg-[#f8f9fa]">
-                        {renderContent()}
+                        <Outlet />
                     </div>
-
-                    {/* Project Editor Overlay */}
-                    {editingProjectId && (
-                        <ProjectEditorView
-                            projectId={editingProjectId}
-                            onClose={() => setEditingProjectId(null)}
-                        />
-                    )}
-
-                    {/* Note Editor Overlay (for permanent/literature notes) */}
-                    {editingCardId && (
-                        <NoteEditorView
-                            cardId={editingCardId}
-                            onClose={() => setEditingCardId(null)}
-                            onNavigate={handleOpenCard}
-                        />
-                    )}
 
                     {/* Reader Overlay */}
                     {readingSource && (() => {
@@ -271,35 +189,32 @@ export function MainLayout() {
                         return source ? (
                             <ReaderView
                                 source={source}
-                                initialNavigation={readerNavState || undefined}
                                 onClose={() => {
                                     setReadingSource(null);
-                                    setReaderNavState(null);
                                 }}
                             />
                         ) : null;
                     })()}
 
-                    {/* Canvas Editor Overlay */}
-                    {editingCanvasId && (
-                        <CanvasEditorView
-                            canvasId={editingCanvasId}
-                            onClose={() => setEditingCanvasId(null)}
-                        />
-                    )}
-
                     {/* Command Palette Overlay */}
                     <CommandPalette
                         isOpen={isCommandPaletteOpen}
                         onClose={() => setIsCommandPaletteOpen(false)}
-                        onViewChange={(view) => setActiveView(view as ViewMode)}
+                        onViewChange={(view) => {
+                            const routeMap: Record<string, string> = {
+                                dashboard: LEGACY_ROUTES.DASHBOARD,
+                                library: LEGACY_ROUTES.LIBRARY,
+                                graph: LEGACY_ROUTES.GRAPH,
+                                review: LEGACY_ROUTES.REVIEW,
+                                tags: LEGACY_ROUTES.TAGS,
+                                settings: LEGACY_ROUTES.SETTINGS,
+                                boards: LEGACY_ROUTES.BOARDS,
+                                "ai-chat": LEGACY_ROUTES.AI_CHAT,
+                            };
+                            const route = routeMap[view] || `/${view}`;
+                            navigate(route);
+                        }}
                         onOpenCard={handleOpenCard}
-                    />
-
-                    {/* Vault Switcher Dialog */}
-                    <VaultSwitcherDialog
-                        open={isVaultSwitcherOpen}
-                        onOpenChange={setIsVaultSwitcherOpen}
                     />
                 </div>
             </div>
@@ -315,8 +230,8 @@ function NavIcon({ icon: Icon, active, onClick, tooltip }: { icon: any, active?:
             className={cn(
                 "p-2 rounded-sm transition-all relative group w-full flex items-center justify-center",
                 active
-                    ? 'bg-blue-600/20 text-blue-400'
-                    : 'hover:text-zinc-100 hover:bg-white/5'
+                    ? 'bg-blue-600/20 text-blue-600'
+                    : 'hover:text-zinc-900 hover:bg-zinc-100'
             )}
         >
             <Icon size={18} strokeWidth={active ? 2.5 : 2} />

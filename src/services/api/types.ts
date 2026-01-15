@@ -52,6 +52,15 @@ export interface UpdateSourceRequest {
   tags?: string[];
   progress?: number;
   lastReadAt?: number;
+  metadata?: {
+    isbn?: string;
+    publisher?: string;
+    publishDate?: string;
+    pageCount?: number;
+    duration?: number;
+    lastPage?: number;
+    lastCfi?: string;
+  };
 }
 
 // ==================== Highlight 相关 ====================
@@ -61,6 +70,7 @@ export interface CreateHighlightRequest {
   cardId?: string;
   content: string;
   note?: string;
+  type?: "highlight" | "underline" | "strikethrough";
   position?: HighlightPosition;
   color?: string;
 }

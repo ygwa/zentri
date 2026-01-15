@@ -35,7 +35,8 @@ import {
 } from "lucide-react";
 import { useAppStore } from "@/store";
 import { pickReadableFile } from "@/lib/file-picker";
-import { parseBookMetadata, generatePlaceholderCover } from "@/lib/book-metadata";
+// 元数据解析已移至 Rust 后端
+import { isLocalFilePath } from "@/lib/file-url";
 import * as api from "@/services/api";
 import type { SourceType } from "@/types";
 
@@ -172,28 +173,26 @@ export function CreateSourceDialog({
     setFetchError(null);
 
     try {
-      // 解析元数据
-      const metadata = await parseBookMetadata(result.path);
+      // 直接导入书籍（Rust 后端负责所有处理）
+      const { importBook } = await import("@/services/api/sources");
+      const source = await importBook(result.path);
       
-      if (metadata.title) {
-        setTitle(metadata.title);
-      } else {
-        // 使用文件名作为标题
-        const nameWithoutExt = result.name.replace(/\.(epub|pdf)$/i, "");
-        setTitle(nameWithoutExt);
-      }
-      
-      if (metadata.author) setAuthor(metadata.author);
-      if (metadata.coverUrl) setCover(metadata.coverUrl);
-      if (metadata.description) setDescription(metadata.description);
+      // 使用 Rust 提取的元数据填充表单
+      setTitle(source.title);
+      if (source.author) setAuthor(source.author);
+      if (source.cover) setCover(source.cover);
+      if (source.description) setDescription(source.description);
       
       setFetchStatus("success");
+      
+      // 如果成功导入，可以自动关闭对话框并刷新列表
+      // onCreated?.(source.id);
     } catch (err) {
-      console.error("Failed to parse file metadata:", err);
+      console.error("Failed to import book:", err);
       // 使用文件名作为标题
       const nameWithoutExt = result.name.replace(/\.(epub|pdf)$/i, "");
       setTitle(nameWithoutExt);
-      setFetchError("无法解析文件元数据，已使用文件名作为标题");
+      setFetchError(err instanceof Error ? err.message : "导入失败");
       setFetchStatus("error");
     }
   };
@@ -204,13 +203,30 @@ export function CreateSourceDialog({
 
     setIsSubmitting(true);
     try {
+      // 如果是电子书类型且有文件路径，直接使用 Rust 后端导入
+      if ((type === "book" || type === "paper") && url && isLocalFilePath(url)) {
+        try {
+          const { importBook } = await import("@/services/api/sources");
+          const source = await importBook(url);
+          onOpenChange(false);
+          onCreated?.(source.id);
+          resetForm();
+          setType("book");
+          return; // 书籍导入已完成，直接返回
+        } catch (err) {
+          console.error("Failed to import book:", err);
+          throw err; // 重新抛出错误，让用户知道导入失败
+        }
+      }
+
+      // 其他类型（网页、视频等）使用原有逻辑
       const source = await createSource({
         type,
         title: title.trim(),
         author: author.trim() || undefined,
         url: url.trim() || undefined,
         description: description.trim() || undefined,
-        cover: cover || generatePlaceholderCover(title.trim(), type === "paper" ? "paper" : "book"),
+        cover: cover || undefined,
         tags: [],
         progress: 0,
       });

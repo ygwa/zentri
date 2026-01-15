@@ -50,7 +50,7 @@ export interface Source {
   description?: string;
   tags: string[];
   // 阅读进度
-  progress: number; // 0-100
+  progress: number; // 0-100 百分比
   lastReadAt?: number;
   // 元数据
   metadata?: {
@@ -58,6 +58,8 @@ export interface Source {
     publisher?: string;
     publishDate?: string;
     pageCount?: number;
+    lastPage?: number; // 上次阅读到的页码（向后兼容，新数据优先使用 lastCfi）
+    lastCfi?: string; // 精确位置标识（CFI 或等效），用于精确恢复阅读位置
     duration?: number; // 视频/播客时长（秒）
   };
   // 关联的文献笔记 ID 列表
@@ -74,6 +76,9 @@ export interface PdfRect {
   height: number;
 }
 
+// 标注类型
+export type AnnotationType = "highlight" | "underline" | "strikethrough";
+
 // 文献笔记高亮/摘录
 export interface Highlight {
   id: string;
@@ -81,19 +86,20 @@ export interface Highlight {
   cardId?: string; // 关联的卡片笔记 ID
   content: string; // 高亮内容
   note?: string; // 批注
+  type?: AnnotationType; // 标注类型：高亮、下划线、删除线（默认为 highlight）
   position?: {
-    // 通用字段
-    page?: number;
-    chapter?: string;
-    startOffset?: number;
-    endOffset?: number;
-    // EPUB 专用 - CFI
+    // EPUB 专用 - CFI (Canonical Fragment Identifier)
     cfi?: string;
-    // PDF 专用 - 精确坐标
+    // PDF 专用 - 页码和矩形坐标
+    page?: number;
     rects?: PdfRect[];
     // 网页专用
     selector?: string;
     textOffset?: number;
+    // 向后兼容字段（保留但不推荐使用）
+    chapter?: string;
+    startOffset?: string | number;
+    endOffset?: string | number;
   };
   color?: string;
   createdAt: number;
@@ -110,6 +116,16 @@ export interface WebSnapshot {
   content: string; // 清洗后的 HTML 内容
   textContent: string; // 纯文本内容（用于搜索）
   excerpt?: string;
+  createdAt: number;
+}
+
+// 书签
+export interface Bookmark {
+  id: string;
+  sourceId: string;
+  position: string; // CFI 或等效位置标识
+  label?: string; // 书签标签（可选）
+  note?: string; // 书签备注（可选）
   createdAt: number;
 }
 

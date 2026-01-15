@@ -54,6 +54,8 @@ pub struct SourceMetadata {
     pub publish_date: Option<String>,
     pub page_count: Option<i32>,
     pub duration: Option<i32>,
+    pub last_page: Option<i32>, // 向后兼容，新数据优先使用 last_cfi
+    pub last_cfi: Option<String>, // 精确位置标识（CFI 或等效），用于精确恢复阅读位置
 }
 
 /// 文献源
@@ -103,5 +105,6 @@ pub struct UpdateSourceRequest {
     pub tags: Option<Vec<String>>,
     pub progress: Option<i32>,
     pub last_read_at: Option<i64>,
+    pub metadata: Option<SourceMetadata>,
 }
 

@@ -25,15 +25,42 @@ export async function parseEpubMetadata(filePath: string): Promise<BookMetadata>
   const metadata: BookMetadata = {};
   
   try {
-    // 转换为可访问的 URL
-    const fileUrl = await getFileUrl(filePath);
+    let arrayBuffer: ArrayBuffer;
     
-    // 获取文件内容
-    const response = await fetch(fileUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch file: ${response.status}`);
+    // 检查是否是相对路径（assets/books/...）
+    const isRelativePath = filePath && 
+      !filePath.startsWith("http") && 
+      !filePath.startsWith("asset://") && 
+      !filePath.startsWith("file://") && 
+      !filePath.startsWith("/") &&
+      !filePath.startsWith("tauri://") &&
+      !filePath.startsWith("blob:");
+    
+    if (isRelativePath) {
+      // 相对路径，使用 Rust 后端读取文件
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const { isTauriEnv } = await import("@/services/api");
+        
+        if (isTauriEnv()) {
+          const fileData = await invoke<number[]>("read_book_file", { relativePath: filePath });
+          arrayBuffer = new Uint8Array(fileData).buffer;
+        } else {
+          throw new Error("Relative path not supported in browser environment");
+        }
+      } catch (err) {
+        console.error("Failed to read file from Rust backend:", err);
+        throw new Error(`Failed to load EPUB file: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else {
+      // 绝对路径或 URL，通过 fetch 获取
+      const fileUrl = await getFileUrl(filePath);
+      const response = await fetch(fileUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch file: ${response.status}`);
+      }
+      arrayBuffer = await response.arrayBuffer();
     }
-    const arrayBuffer = await response.arrayBuffer();
     
     // 创建 EPUB 实例
     const book: Book = ePub(arrayBuffer);
@@ -66,10 +93,30 @@ export async function parseEpubMetadata(filePath: string): Promise<BookMetadata>
     try {
       const coverUrl = await book.coverUrl();
       if (coverUrl) {
-        // 将封面转换为 data URL 以便存储
-        const coverResponse = await fetch(coverUrl);
-        const coverBlob = await coverResponse.blob();
-        metadata.coverUrl = await blobToDataUrl(coverBlob);
+        try {
+          // 将封面转换为 data URL 以便存储
+          const coverResponse = await fetch(coverUrl);
+          if (coverResponse.ok) {
+            const coverBlob = await coverResponse.blob();
+            metadata.coverUrl = await blobToDataUrl(coverBlob);
+          } else {
+            console.warn("Failed to fetch cover image:", coverResponse.status);
+          }
+        } catch (fetchErr) {
+          // 如果 fetch 失败，尝试使用 book.archive 直接获取封面
+          console.warn("Failed to fetch cover URL, trying alternative method:", fetchErr);
+          try {
+            // epubjs 的 coverUrl 可能返回一个需要特殊处理的 URL
+            // 尝试直接从 archive 获取封面
+            const cover = await (book.archive as any).get(coverUrl);
+            if (cover) {
+              const coverBlob = new Blob([cover], { type: 'image/jpeg' });
+              metadata.coverUrl = await blobToDataUrl(coverBlob);
+            }
+          } catch (archiveErr) {
+            console.warn("Failed to get cover from archive:", archiveErr);
+          }
+        }
       }
     } catch (e) {
       console.warn("Failed to extract cover image:", e);
@@ -197,6 +244,9 @@ export function generatePlaceholderCover(title: string, type: 'book' | 'paper' =
   
   return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
 }
+
+
+
 
 
 

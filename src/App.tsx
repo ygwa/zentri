@@ -1,23 +1,76 @@
 import { useEffect } from "react";
-import { MainLayout } from "@/components/layout/main-layout";
+import { RouterProvider } from "react-router-dom";
+import { router } from "@/router/index";
 import { VaultSelector } from "@/components/vault-selector";
-import { useAppStore } from "@/store";
+import { useAppStore, initializeApp, setVaultPath } from "@/store";
 import { isTauriEnv } from "@/services/api";
 import { useWindowState } from "@/hooks/use-window-state";
+import { useNativeFileDrop } from "@/hooks/use-native-features";
+import { useTheme } from "@/hooks/use-theme";
 
 import "./App.css";
 
 function App() {
-  const { isInitialized, isLoading, vaultPath, error, initialize, setInitialVaultPath } =
-    useAppStore();
+  const { isInitialized, isLoading, vaultPath, error } = useAppStore();
+  
+  // 系统主题自动同步（useTheme 已处理）
+  useTheme();
 
   // 初始化窗口状态管理（保存和恢复窗口位置、大小）
   useWindowState();
 
+  // 处理 Tauri 原生文件拖拽
+  useNativeFileDrop(async (paths: string[]) => {
+    if (!isTauriEnv()) return;
+    
+    // 过滤出 PDF 和 EPUB 文件
+    const supportedExtensions = ['.pdf', '.epub'];
+    const validPaths = paths.filter(path => {
+      const ext = path.toLowerCase().substring(path.lastIndexOf('.'));
+      return supportedExtensions.includes(ext);
+    });
+
+    if (validPaths.length === 0) return;
+
+    // 导入文件
+    try {
+      const { importBook } = await import("@/services/api/sources");
+      for (const path of validPaths) {
+        await importBook(path);
+      }
+      // 刷新资源列表
+      const { loadSources } = useAppStore.getState();
+      await loadSources();
+    } catch (err) {
+      console.error("Failed to import dropped files:", err);
+    }
+  });
+
+  // // 禁用全局默认右键菜单（消除浏览器痕迹）
+  // useEffect(() => {
+  //   const handleContextMenu = (e: MouseEvent) => {
+  //     // 允许在编辑器和特定区域使用右键菜单
+  //     const target = e.target as HTMLElement;
+  //     const isEditable = target.closest('[contenteditable="true"]') ||
+  //                       target.closest('.ProseMirror') ||
+  //                       target.closest('[data-editable="true"]') ||
+  //                       target.closest('[data-allow-context-menu="true"]');
+      
+  //     if (!isEditable) {
+  //       e.preventDefault();
+  //     }
+  //   };
+
+  //   document.addEventListener('contextmenu', handleContextMenu);
+  //   return () => {
+  //     document.removeEventListener('contextmenu', handleContextMenu);
+  //   };
+  // }, []);
+
   // 初始化应用
   useEffect(() => {
-    initialize();
-  }, [initialize]);
+    initializeApp();
+  }, []);
 
   // 加载状态
   if (!isInitialized || isLoading) {
@@ -82,7 +135,7 @@ function App() {
   // 主界面
   return (
     <div className="h-full w-full overflow-hidden">
-      <MainLayout />
+      <RouterProvider router={router} />
     </div>
   );
 }

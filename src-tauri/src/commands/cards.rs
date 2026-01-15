@@ -1,43 +1,25 @@
 //! Card 相关命令
 
-use crate::models::{Card, CardListItem, CardType};
+use crate::models::{Card, CardType};
 use crate::state::AppState;
-use crate::storage;
 use tauri::State;
 
-/// 获取所有卡片
+/// 获取所有卡片（包含完整内容）
 #[tauri::command]
-pub fn get_cards(state: State<AppState>) -> Result<Vec<CardListItem>, String> {
+pub async fn get_cards(state: State<'_, AppState>) -> Result<Vec<Card>, String> {
     println!("[DEBUG] command::get_cards called");
-    let vault_path = state
-        .vault_path
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("Vault path not set")?;
-
-    let cards = storage::read_all_cards(&vault_path);
-    println!("[DEBUG] command::get_cards returning {} cards", cards.len());
+    let services = state.get_services().ok_or("Vault not initialized")?;
+    let cards = services.card.get_all().await.map_err(|e| e.to_string())?;
+    println!("[DEBUG] command::get_cards returning {} cards with full content", cards.len());
     Ok(cards)
 }
 
 /// 获取单个卡片
 #[tauri::command]
-pub fn get_card(state: State<AppState>, id: String) -> Result<Option<Card>, String> {
+pub async fn get_card(state: State<'_, AppState>, id: String) -> Result<Option<Card>, String> {
     println!("[DEBUG] command::get_card called with id: {}", id);
-    let vault_path = state
-        .vault_path
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("Vault path not set")?;
-
-    // 安全检查
-    if id.contains("..") {
-        return Err("Invalid card ID".to_string());
-    }
-
-    let card = storage::read_card(&vault_path, &id);
+    let services = state.get_services().ok_or("Vault not initialized")?;
+    let card = services.card.get_by_id(&id).await.map_err(|e| e.to_string())?;
     println!(
         "[DEBUG] command::get_card returning {:?}",
         card.as_ref().map(|c| &c.id)
@@ -47,75 +29,35 @@ pub fn get_card(state: State<AppState>, id: String) -> Result<Option<Card>, Stri
 
 /// 获取卡片 by 路径
 #[tauri::command]
-pub fn get_card_by_path(state: State<AppState>, path: String) -> Result<Option<Card>, String> {
-    let vault_path = state
-        .vault_path
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("Vault path not set")?;
-
-    // 从路径提取 ID
-    if let Some(id) = path
-        .strip_prefix("cards/")
-        .and_then(|p| p.strip_suffix(".json"))
-    {
-        Ok(storage::read_card(&vault_path, id))
-    } else {
-        // 尝试直接作为 ID
-        Ok(storage::read_card(&vault_path, &path))
-    }
+pub async fn get_card_by_path(state: State<'_, AppState>, path: String) -> Result<Option<Card>, String> {
+    let services = state.get_services().ok_or("Vault not initialized")?;
+    services.card.get_by_path(&path).await.map_err(|e| e.to_string())
 }
 
 /// 创建卡片
 #[tauri::command]
-pub fn create_card(
-    state: State<AppState>,
+pub async fn create_card(
+    state: State<'_, AppState>,
     card_type: String,
     title: String,
     source_id: Option<String>,
 ) -> Result<Card, String> {
-    let vault_path = state
-        .vault_path
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("Vault path not set")?;
-
     let ct = CardType::from_str(&card_type);
 
-    // 确保存储目录存在
-    storage::ensure_storage_dirs(&vault_path)?;
-
-    let card = storage::create_card(&vault_path, ct, &title, source_id.as_deref())?;
-
-    // 如果有 source_id，添加到 source 的 note_ids
-    if let Some(ref sid) = source_id {
-        state.db.add_note_to_source(sid, &card.id).ok();
-    }
-
-    // 更新索引 (使用纯文本内容而不是 JSON)
-    if let Some(indexer) = state.indexer.lock().unwrap().as_ref() {
-        indexer
-            .index_doc_with_type(
-                &card.id,
-                &card.title,
-                &card.plain_text,
-                &card.tags,
-                &card.path,
-                card.modified_at,
-                Some(card.card_type.as_str()),
-            )
-            .ok();
-    }
-
-    Ok(card)
+    // 使用服务层创建卡片
+    let services = state.get_services().ok_or("Vault not initialized")?;
+    let indexer_ref: Option<&std::sync::Mutex<Option<crate::search::Indexer>>> = Some(&state.indexer);
+    services
+        .card
+        .create(ct, &title, None, source_id.as_deref(), indexer_ref)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 更新卡片
 #[tauri::command]
-pub fn update_card(
-    state: State<AppState>,
+pub async fn update_card(
+    state: State<'_, AppState>,
     id: String,
     title: Option<String>,
     content: Option<String>,
@@ -123,70 +65,28 @@ pub fn update_card(
     card_type: Option<String>,
     _links: Option<Vec<String>>, // links 现在从 content 自动提取
 ) -> Result<Card, String> {
-    let vault_path = state
-        .vault_path
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("Vault path not set")?;
-
-    // 安全检查
-    if id.contains("..") {
-        return Err("Invalid card ID".to_string());
-    }
-
     let ct = card_type.map(|s| CardType::from_str(&s));
-    storage::update_card(
-        &vault_path,
-        &id,
-        title.as_deref(),
-        content.as_deref(),
-        tags,
-        ct,
-    )?;
-
-    // 读取更新后的卡片
-    let card = storage::read_card(&vault_path, &id).ok_or("Card not found after update")?;
-
-    // 更新索引 (使用纯文本内容)
-    if let Some(indexer) = state.indexer.lock().unwrap().as_ref() {
-        indexer
-            .index_doc_with_type(
-                &card.id,
-                &card.title,
-                &card.plain_text,
-                &card.tags,
-                &card.path,
-                card.modified_at,
-                Some(card.card_type.as_str()),
-            )
-            .ok();
-    }
-
-    Ok(card)
+    
+    let services = state.get_services().ok_or("Vault not initialized")?;
+    let indexer_ref: Option<&std::sync::Mutex<Option<crate::search::Indexer>>> = Some(&state.indexer);
+    services
+        .card
+        .update(
+            &id,
+            title.as_deref(),
+            content.as_deref(),
+            tags,
+            ct,
+            indexer_ref,
+        )
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 删除卡片
 #[tauri::command]
-pub fn delete_card(state: State<AppState>, id: String) -> Result<(), String> {
-    let vault_path = state
-        .vault_path
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("Vault path not set")?;
-
-    // 安全检查
-    if id.contains("..") {
-        return Err("Invalid card ID".to_string());
-    }
-
-    storage::delete_card(&vault_path, &id)?;
-
-    // 更新索引
-    if let Some(indexer) = state.indexer.lock().unwrap().as_ref() {
-        indexer.delete_doc(&id).ok();
-    }
-
-    Ok(())
+pub async fn delete_card(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let services = state.get_services().ok_or("Vault not initialized")?;
+    let indexer_ref: Option<&std::sync::Mutex<Option<crate::search::Indexer>>> = Some(&state.indexer);
+    services.card.delete(&id, indexer_ref).await.map_err(|e| e.to_string())
 }

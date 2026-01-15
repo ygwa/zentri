@@ -48,6 +48,15 @@ export async function update(id: string, updates: Partial<Source>): Promise<Sour
     tags: updates.tags,
     progress: updates.progress,
     lastReadAt: updates.lastReadAt,
+    metadata: updates.metadata ? {
+      isbn: updates.metadata.isbn,
+      publisher: updates.metadata.publisher,
+      publishDate: updates.metadata.publishDate,
+      pageCount: updates.metadata.pageCount,
+      duration: updates.metadata.duration,
+      lastPage: updates.metadata.lastPage,
+      lastCfi: updates.metadata.lastCfi,
+    } : undefined,
   };
   return await invoke<Source | null>("update_source", { id, req });
 }
@@ -61,4 +70,12 @@ export async function deleteSource(id: string): Promise<void> {
 
 // 导出 delete 别名
 export { deleteSource as delete };
+
+/**
+ * 导入书籍
+ * 前端只发送文件路径，Rust 负责所有处理（解压、元数据提取、封面提取、索引建立）
+ */
+export async function importBook(filePath: string): Promise<Source> {
+  return await invoke<Source>("import_book", { filePath });
+}
 

@@ -4,7 +4,7 @@ import { useAppStore } from "@/store";
 import type { Source, SourceType } from "@/types";
 import { CreateSourceDialog } from "@/components/create-source-dialog";
 import { pickReadableFile } from "@/lib/file-picker";
-import { parseBookMetadata, generatePlaceholderCover } from "@/lib/book-metadata";
+// 移除前端元数据解析，由 Rust 后端处理
 import { useDebounce } from "@/hooks/use-debounce";
 import {
     DropdownMenu,
@@ -59,7 +59,7 @@ function formatTimeAgo(timestamp: number): string {
 }
 
 export function LibraryView({ onRead }: LibraryViewProps) {
-    const { sources, loadSources, createSource, deleteSource } = useAppStore();
+    const { sources, loadSources, deleteSource } = useAppStore();
     const [viewMode, setViewMode] = useState<'grid' | 'list'>(
         () => (localStorage.getItem('library-view-mode') as 'grid' | 'list') || 'grid'
     );
@@ -120,37 +120,20 @@ export function LibraryView({ onRead }: LibraryViewProps) {
         setIsDragging(false);
     };
 
-    // 处理文件导入（自动提取元数据）
+    // 处理文件导入（使用 Rust 后端处理）
     const handleFileImport = async (file: { path: string; name: string }) => {
         try {
-            // 根据文件类型创建source
+            // 检查文件类型
             const ext = file.name.toLowerCase().split('.').pop();
-            const type = ext === 'pdf' ? 'paper' : 'book';
-            const nameWithoutExt = file.name.replace(/\.(epub|pdf)$/i, "");
-            
-            // 尝试解析元数据
-            let title = nameWithoutExt;
-            let author: string | undefined;
-            let cover: string | undefined;
-            
-            try {
-                const metadata = await parseBookMetadata(file.path);
-                if (metadata.title) title = metadata.title;
-                if (metadata.author) author = metadata.author;
-                if (metadata.coverUrl) cover = metadata.coverUrl;
-            } catch (err) {
-                console.warn("Failed to parse metadata, using filename:", err);
+            if (ext !== 'epub' && ext !== 'pdf') {
+                console.error("Unsupported file type:", ext);
+                return;
             }
+
+            // 调用 Rust 后端导入书籍（Rust 负责所有处理）
+            const { importBook } = await import("@/services/api/sources");
+            await importBook(file.path);
             
-            await createSource({
-                type: type as Source['type'],
-                title,
-                author,
-                url: file.path,
-                cover: cover || generatePlaceholderCover(title, type as 'book' | 'paper'),
-                tags: [],
-                progress: 0,
-            });
             // 导入后自动刷新
             await loadSources();
         } catch (err) {

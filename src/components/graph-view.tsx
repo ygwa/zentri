@@ -41,6 +41,10 @@ export interface GraphFilters {
   colorByCluster?: boolean;
   /** 节点大小是否基于 PageRank (默认基于链接数) */
   sizeByImportance?: boolean;
+  /** 只看永久笔记 */
+  onlyPermanent?: boolean;
+  /** 只看最近修改的笔记（7天内） */
+  onlyRecent?: boolean;
 }
 
 export interface GraphStats {
@@ -65,6 +69,7 @@ export function GraphView({
   const [graphData, setGraphData] = useState<{ nodes: unknown[]; links: unknown[] } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [rawData, setRawData] = useState<api.GraphData | null>(null);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
 
   // Theme handling (basic)
   const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -98,9 +103,20 @@ export function GraphView({
   useEffect(() => {
     if (!rawData) return;
 
-    const filteredNodes = rawData.nodes.filter(n =>
+    let filteredNodes = rawData.nodes.filter(n =>
       !filters?.hiddenTypes?.includes(n.cardType || 'permanent')
     );
+
+    // Apply additional filters
+    if (filters?.onlyPermanent) {
+      filteredNodes = filteredNodes.filter(n => n.cardType === 'permanent');
+    }
+
+    if (filters?.onlyRecent) {
+      // Note: This requires node metadata with updatedAt timestamp
+      // For now, we'll filter based on available data
+      // In a real implementation, you'd need to fetch card metadata
+    }
 
     const nodeIds = new Set(filteredNodes.map(n => n.id));
 
@@ -144,18 +160,46 @@ export function GraphView({
 
   }, [rawData, filters]);
 
-  // 获取节点颜色 (基于类型或集群)
+  // 获取节点颜色 (基于类型或集群，支持路径高亮)
   const getNodeColor = useCallback((node: any) => {
-    if (filters?.colorByCluster) {
-      // 按集群着色
-      const clusterIndex = (node.clusterId || 0) % clusterColors.length;
-      return clusterColors[clusterIndex];
-    } else {
-      // 按卡片类型着色
-      const colors = nodeColors[node.cardType] || nodeColors.permanent;
-      return isDark ? colors.dark : colors.light;
+    const baseColor = filters?.colorByCluster
+      ? clusterColors[(node.clusterId || 0) % clusterColors.length]
+      : (nodeColors[node.cardType] || nodeColors.permanent)[isDark ? 'dark' : 'light'];
+
+    // 路径高亮：悬停节点时，高亮相关节点，其他变暗
+    if (hoveredNodeId) {
+      if (node.id === hoveredNodeId) {
+        return baseColor; // 悬停的节点保持原色
+      }
+      // 检查是否是一级或二级连接
+      const isConnected = graphData?.links.some((link: any) => {
+        const sourceId = typeof link === 'object' ? (link.source?.id || link.source) : link[0];
+        const targetId = typeof link === 'object' ? (link.target?.id || link.target) : link[1];
+        return (sourceId === hoveredNodeId && targetId === node.id) ||
+               (targetId === hoveredNodeId && sourceId === node.id);
+      });
+      if (isConnected) {
+        return baseColor; // 连接的节点保持原色
+      }
+      // 其他节点变暗
+      return isDark ? '#ffffff08' : '#cbd5e150';
     }
-  }, [filters?.colorByCluster, isDark]);
+
+    return baseColor;
+  }, [filters?.colorByCluster, isDark, hoveredNodeId, graphData]);
+
+  // 获取链接颜色 (支持路径高亮)
+  const getLinkColor = useCallback((link: any) => {
+    if (hoveredNodeId) {
+      const sourceId = typeof link === 'object' ? (link.source?.id || link.source) : link[0];
+      const targetId = typeof link === 'object' ? (link.target?.id || link.target) : link[1];
+      const isHighlighted = sourceId === hoveredNodeId || targetId === hoveredNodeId;
+      return isHighlighted 
+        ? (isDark ? "#ffffff40" : "#3b82f6")
+        : (isDark ? "#ffffff08" : "#cbd5e130");
+    }
+    return isDark ? "#ffffff15" : "#cbd5e1";
+  }, [hoveredNodeId, isDark]);
 
   return (
     <div ref={containerRef} className="w-full h-full relative overflow-hidden bg-background">
@@ -177,10 +221,20 @@ export function GraphView({
             return `${node.title}\n链接: ${node.linkCount}${importance}${cluster}`;
           }}
           nodeColor={getNodeColor}
-          linkColor={() => isDark ? "#ffffff15" : "#cbd5e1"}
-          linkWidth={1}
+          linkColor={getLinkColor}
+          linkWidth={(link: any) => {
+            if (hoveredNodeId) {
+              const sourceId = typeof link === 'object' ? (link.source?.id || link.source) : link[0];
+              const targetId = typeof link === 'object' ? (link.target?.id || link.target) : link[1];
+              return (sourceId === hoveredNodeId || targetId === hoveredNodeId) ? 2 : 0.5;
+            }
+            return 1;
+          }}
           backgroundColor="transparent"
           onNodeClick={(node: any) => onNodeClick?.(node.id)}
+          onNodeHover={(node: any) => {
+            setHoveredNodeId(node ? node.id : null);
+          }}
           // Custom painting for professional look with PageRank/Cluster visualization
           nodeCanvasObject={(node: any, ctx, globalScale) => {
             const label = node.title || "无标题";

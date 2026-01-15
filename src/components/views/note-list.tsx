@@ -1,7 +1,6 @@
 
 import { useAppStore } from "@/store";
-import { Search, Plus, Filter, SortAsc } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Search, GripVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CardType } from "@/types";
 
@@ -16,7 +15,7 @@ export function NoteList({ viewMode, selectedId, onSelect }: NoteListProps) {
 
     // Filter logic based on viewMode
     const filteredCards = cards.filter(card => {
-        if (viewMode === 'inbox') return card.type === 'fleeting'; // Assuming 'fleeting' is inbox for now
+        if (viewMode === 'inbox') return card.type === 'fleeting';
         if (viewMode === 'all') return true;
         return true;
     });
@@ -34,39 +33,26 @@ export function NoteList({ viewMode, selectedId, onSelect }: NoteListProps) {
     return (
         <div className="h-full flex flex-col bg-[#fafafa]">
             {/* Header */}
-            <div className="h-14 px-4 border-b border-[#e5e5e5] flex items-center justify-between shrink-0 bg-[#fafafa]">
-                <h2 className="font-semibold text-sm tracking-wide text-[#71717a] uppercase">
-                    {viewMode === 'inbox' ? 'Inbox' : 'Zettelkasten'}
+            <div className="h-10 px-4 border-b border-[#e5e5e5] flex items-center justify-between shrink-0 bg-[#fafafa]">
+                <h2 className="font-semibold text-xs tracking-wide text-[#71717a] uppercase">
+                    {viewMode === 'inbox' ? 'Inbox' : 'Notes'}
                 </h2>
                 <div className="flex items-center gap-1">
-                    <span className="text-xs text-[#a1a1aa] bg-[#f4f4f5] px-2 py-0.5 rounded-md border border-[#e4e4e7]">
+                    <span className="text-[10px] text-[#a1a1aa] bg-[#f4f4f5] px-1.5 py-0.5 rounded-md border border-[#e4e4e7]">
                         {filteredCards.length}
                     </span>
                 </div>
             </div>
 
             {/* Search Bar */}
-            <div className="px-3 py-3 shrink-0">
+            <div className="px-3 py-2 shrink-0">
                 <div className="relative">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-[#a1a1aa]" />
+                    <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-[#a1a1aa]" />
                     <input
-                        className="w-full bg-white border border-[#e5e5e5] rounded-lg pl-9 pr-3 py-2 text-sm text-[#3f3f46] placeholder:text-[#a1a1aa] focus:outline-none focus:ring-1 focus:ring-[#e5e5e5] shadow-sm transition-all"
-                        placeholder="Cmd+I to capture..."
+                        className="w-full bg-white border border-[#e5e5e5] rounded-md pl-8 pr-3 py-1.5 text-xs text-[#3f3f46] placeholder:text-[#a1a1aa] focus:outline-none focus:ring-1 focus:ring-[#e5e5e5] shadow-sm transition-all"
+                        placeholder="Search notes..."
                     />
-                    <div className="absolute right-2 top-2.5">
-                        <span className="text-[10px] text-[#d4d4d8] border border-[#e4e4e7] rounded px-1">↵</span>
-                    </div>
                 </div>
-            </div>
-
-            {/* Filter / Sort Row (Optional) */}
-            <div className="px-3 pb-2 flex items-center gap-2 shrink-0">
-                <Button variant="ghost" size="sm" className="h-6 text-xs text-[#71717a] gap-1 px-2 hover:bg-[#f4f4f5]">
-                    <Filter className="w-3 h-3" /> Filter
-                </Button>
-                <Button variant="ghost" size="sm" className="h-6 text-xs text-[#71717a] gap-1 px-2 hover:bg-[#f4f4f5]">
-                    <SortAsc className="w-3 h-3" /> Recent
-                </Button>
             </div>
 
             {/* List */}
@@ -75,50 +61,66 @@ export function NoteList({ viewMode, selectedId, onSelect }: NoteListProps) {
                     <div
                         key={card.id}
                         onClick={() => onSelect(card.id)}
+                        draggable="true"
+                        onDragStart={(e) => {
+                            // Custom types
+                            e.dataTransfer.setData('application/reactflow/type', 'card');
+                            e.dataTransfer.setData('application/zentri/card-id', card.id);
+                            e.dataTransfer.setData('application/zentri/card-title', card.title || 'Untitled');
+
+                            // JSON Fallback (more reliable)
+                            const dragData = {
+                                type: 'card',
+                                cardId: card.id,
+                                cardTitle: card.title || 'Untitled'
+                            };
+                            e.dataTransfer.setData('text/plain', JSON.stringify(dragData));
+                            e.dataTransfer.effectAllowed = 'copy';
+                        }}
                         className={cn(
-                            "group flex flex-col gap-1.5 p-3 rounded-xl border transition-all cursor-pointer shadow-sm",
+                            "group flex gap-2 p-3 rounded-lg border transition-all cursor-grab active:cursor-grabbing shadow-sm items-start relative",
                             selectedId === card.id
                                 ? "bg-white border-blue-400/50 shadow-md ring-1 ring-blue-400/20"
                                 : "bg-white border-transparent hover:border-[#e4e4e7] hover:shadow-md"
                         )}
                     >
-                        <div className="flex items-start justify-between gap-2">
-                            <h3 className={cn(
-                                "font-medium text-sm leading-snug line-clamp-2",
-                                selectedId === card.id ? "text-[#18181b]" : "text-[#3f3f46]"
-                            )}>
-                                {card.title || "Untitled Card"}
-                            </h3>
-                            <span className="text-[10px] text-[#a1a1aa] font-mono shrink-0 pt-0.5">
-                                {new Date(card.updatedAt).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
-                            </span>
+                        {/* Grip Handle */}
+                        <div className="mt-0.5 text-zinc-300 group-hover:text-zinc-400">
+                            <GripVertical size={12} />
                         </div>
 
-                        <div className="flex items-center gap-2 mt-1">
-                            <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium", getCardTypeColor(card.type))}>
-                                #{card.type}
-                            </span>
-                            {card.tags?.slice(0, 2).map(tag => (
-                                <span key={tag} className="text-[10px] text-[#71717a] bg-[#f4f4f5] px-1.5 py-0.5 rounded border border-[#e4e4e7]">
-                                    #{tag}
+                        <div className="flex-1 flex flex-col gap-1.5 min-w-0">
+                            <div className="flex items-start justify-between gap-2">
+                                <h3 className={cn(
+                                    "font-medium text-xs leading-snug line-clamp-2",
+                                    selectedId === card.id ? "text-[#18181b]" : "text-[#3f3f46]"
+                                )}>
+                                    {card.title || "Untitled Card"}
+                                </h3>
+                                <span className="text-[9px] text-[#a1a1aa] font-mono shrink-0 pt-0.5">
+                                    {new Date(card.updatedAt).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
                                 </span>
-                            ))}
+                            </div>
+
+                            <div className="flex items-center gap-2 mt-1">
+                                <span className={cn("text-[9px] px-1 py-0.5 rounded-[3px] border font-medium", getCardTypeColor(card.type))}>
+                                    #{card.type}
+                                </span>
+                                {card.tags?.slice(0, 2).map(tag => (
+                                    <span key={tag} className="text-[9px] text-[#71717a] bg-[#f4f4f5] px-1 py-0.5 rounded-[3px] border border-[#e4e4e7]">
+                                        #{tag}
+                                    </span>
+                                ))}
+                            </div>
                         </div>
                     </div>
                 ))}
 
                 {filteredCards.length === 0 && (
-                    <div className="text-center py-10 text-[#a1a1aa] text-sm">
+                    <div className="text-center py-10 text-[#a1a1aa] text-xs">
                         No notes found.
                     </div>
                 )}
-            </div>
-
-            {/* FAB for New Note */}
-            <div className="p-4 border-t border-[#e5e5e5] shrink-0 bg-[#fafafa]">
-                <Button className="w-full bg-[#18181b] hover:bg-[#27272a] text-white shadow-lg">
-                    <Plus className="w-4 h-4 mr-2" /> New Note
-                </Button>
             </div>
         </div>
     );
